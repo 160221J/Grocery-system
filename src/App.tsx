@@ -164,8 +164,12 @@ export default function App() {
       setStats(await statsRes.json());
       
       if (activeTab === 'profit') {
-        const historyRes = await fetch('/api/sales/daily');
+        const [historyRes, withdrawalRes] = await Promise.all([
+          fetch('/api/sales/daily'),
+          fetch('/api/withdrawals')
+        ]);
         setSaleHistory(await historyRes.json());
+        setWithdrawalHistory(await withdrawalRes.json());
       }
       if (activeTab === 'withdrawals') {
         const historyRes = await fetch('/api/withdrawals');
@@ -230,6 +234,23 @@ export default function App() {
     } catch (error) {
       console.error('Undo failed:', error);
       alert('Network error while undoing arrival');
+    }
+  };
+
+  const handleDeleteProduct = async (id: number) => {
+    if (!confirm('WARNING: Deleting this product will also delete ALL its sales history, withdrawals, and stock arrivals. This cannot be undone. Are you sure?')) return;
+    try {
+      const res = await fetch(`/api/products/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        await fetchData();
+        alert('Product and all related history deleted.');
+      } else {
+        const err = await res.json();
+        alert(`Failed to delete product: ${err.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Delete failed:', error);
+      alert('Network error while deleting product');
     }
   };
 
@@ -594,7 +615,10 @@ export default function App() {
                       <button onClick={() => setEditingProduct(null)} className="text-zinc-400 hover:text-zinc-600"><X size={16} /></button>
                     </div>
                   ) : (
-                    <button onClick={() => setEditingProduct(product)} className="text-emerald-600 hover:text-emerald-700"><Edit2 size={16} /></button>
+                    <div className="flex gap-3">
+                      <button onClick={() => setEditingProduct(product)} className="text-emerald-600 hover:text-emerald-700"><Edit2 size={16} /></button>
+                      <button onClick={() => handleDeleteProduct(product.id)} className="text-zinc-300 hover:text-red-600 transition-colors"><Trash2 size={16} /></button>
+                    </div>
                   )}
                 </td>
               </tr>

@@ -242,7 +242,7 @@ async function startServer() {
       const saleId = req.params.id;
       console.log(`[API] Deleting sale: ${saleId}`);
       const transaction = db.transaction(() => {
-        const items = db.prepare("SELECT * FROM sale_items WHERE sale_id = ?").all() as any[];
+        const items = db.prepare("SELECT * FROM sale_items WHERE sale_id = ?").all(saleId) as any[];
         for (const item of items) {
           db.prepare("UPDATE products SET quantity = quantity + ? WHERE id = ?").run(item.quantity, item.product_id);
         }
@@ -291,6 +291,27 @@ async function startServer() {
       res.json({ success: true });
     } catch (error) {
       console.error("Delete stock arrival error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/products/:id", (req, res) => {
+    try {
+      const id = req.params.id;
+      const transaction = db.transaction(() => {
+        // Delete related records first to avoid foreign key violations
+        db.prepare("DELETE FROM sale_items WHERE product_id = ?").run(id);
+        db.prepare("DELETE FROM withdrawals WHERE product_id = ?").run(id);
+        db.prepare("DELETE FROM stock_arrivals WHERE product_id = ?").run(id);
+        db.prepare("DELETE FROM products WHERE id = ?").run(id);
+        
+        // Clean up empty sales (sales with no items left)
+        db.prepare("DELETE FROM sales WHERE id NOT IN (SELECT DISTINCT sale_id FROM sale_items)").run();
+      });
+      transaction();
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Delete product error:", error);
       res.status(500).json({ error: error.message });
     }
   });
