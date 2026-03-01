@@ -2,6 +2,7 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import Database from "better-sqlite3";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -295,6 +296,75 @@ async function startServer() {
     }
   });
 
+  app.get("/api/sales/monthly", (req, res) => {
+    try {
+      const monthlyStats = db.prepare(`
+        SELECT 
+          strftime('%Y-%m', created_at) as month,
+          SUM(total_amount) as total_sales,
+          SUM(total_profit) as total_profit,
+          (SELECT SUM(amount) FROM withdrawals WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', s.created_at)) as total_withdrawals
+        FROM sales s
+        GROUP BY month
+        ORDER BY month DESC
+      `).all();
+      res.json(monthlyStats);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/reset/daily", (req, res) => {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const transaction = db.transaction(() => {
+        // We don't revert stock for a bulk reset, just clear history
+        db.prepare("DELETE FROM sale_items WHERE sale_id IN (SELECT id FROM sales WHERE date(created_at) = date(?))").run(today);
+        db.prepare("DELETE FROM sales WHERE date(created_at) = date(?)").run(today);
+        db.prepare("DELETE FROM withdrawals WHERE date(created_at) = date(?)").run(today);
+      });
+      transaction();
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/reset/monthly", (req, res) => {
+    try {
+      const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+      const transaction = db.transaction(() => {
+        db.prepare("DELETE FROM sale_items WHERE sale_id IN (SELECT id FROM sales WHERE strftime('%Y-%m', created_at) = ? )").run(currentMonth);
+        db.prepare("DELETE FROM sales WHERE strftime('%Y-%m', created_at) = ?").run(currentMonth);
+        db.prepare("DELETE FROM withdrawals WHERE strftime('%Y-%m', created_at) = ?").run(currentMonth);
+      });
+      transaction();
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/query", (req, res) => {
+    try {
+      const { sql } = req.body;
+      if (!sql) return res.status(400).json({ error: "SQL query is required" });
+      
+      const isSelect = sql.trim().toLowerCase().startsWith("select") || sql.trim().toLowerCase().startsWith("pragma");
+      
+      if (isSelect) {
+        const results = db.prepare(sql).all();
+        res.json({ results });
+      } else {
+        const info = db.prepare(sql).run();
+        res.json({ results: [info] });
+      }
+    } catch (error) {
+      console.error("SQL Query error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.delete("/api/products/:id", (req, res) => {
     try {
       const id = req.params.id;
@@ -323,6 +393,19 @@ async function startServer() {
       appType: "spa",
     });
     app.use(vite.middlewares);
+    
+    // Explicitly handle index.html for dev mode
+    app.get("*", async (req, res, next) => {
+      const url = req.originalUrl;
+      try {
+        let template = await fs.promises.readFile(path.resolve(__dirname, "index.html"), "utf-8");
+        template = await vite.transformIndexHtml(url, template);
+        res.status(200).set({ "Content-Type": "text/html" }).end(template);
+      } catch (e) {
+        vite.ssrFixStacktrace(e);
+        next(e);
+      }
+    });
   } else {
     app.use(express.static(path.join(__dirname, "dist")));
     app.get("*", (req, res) => {
