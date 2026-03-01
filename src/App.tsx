@@ -19,7 +19,11 @@ import {
   Edit2,
   Save,
   X,
-  ChevronDown
+  ChevronDown,
+  Database as DatabaseIcon,
+  Terminal,
+  Menu,
+  MoreHorizontal
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -63,6 +67,86 @@ const SidebarItem = ({ icon: Icon, label, active, onClick }: { icon: any, label:
     <span className="font-medium text-sm">{label}</span>
   </button>
 );
+
+const MobileBottomNav = ({ activeTab, setActiveTab, stats }: { activeTab: string, setActiveTab: (tab: any) => void, stats: DashboardStats }) => {
+  const [isMoreOpen, setIsMoreOpen] = useState(false);
+
+  const navItems = [
+    { id: 'dashboard', icon: LayoutDashboard, label: 'Home' },
+    { id: 'sales', icon: ShoppingCart, label: 'Sale' },
+    { id: 'inventory', icon: Package, label: 'Stock', badge: stats.lowStockCount },
+    { id: 'profit', icon: History, label: 'Profit' },
+  ];
+
+  const moreItems = [
+    { id: 'stock-arrival', icon: PlusCircle, label: 'Arrival' },
+    { id: 'withdrawals', icon: MinusCircle, label: 'Withdraw' },
+    { id: 'database', icon: DatabaseIcon, label: 'DB Lab' },
+  ];
+
+  return (
+    <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-zinc-200 z-50">
+      <div className="flex items-center justify-around h-16">
+        {navItems.map(item => (
+          <button
+            key={item.id}
+            onClick={() => { setActiveTab(item.id); setIsMoreOpen(false); }}
+            className={`flex flex-col items-center gap-1 relative ${activeTab === item.id ? 'text-emerald-600' : 'text-zinc-400'}`}
+          >
+            <item.icon size={20} />
+            <span className="text-[10px] font-bold uppercase tracking-tighter">{item.label}</span>
+            {item.badge ? (
+              <span className="absolute -top-1 -right-1 w-4 h-4 bg-amber-500 text-white text-[8px] rounded-full flex items-center justify-center">
+                {item.badge}
+              </span>
+            ) : null}
+          </button>
+        ))}
+        <button
+          onClick={() => setIsMoreOpen(!isMoreOpen)}
+          className={`flex flex-col items-center gap-1 ${isMoreOpen ? 'text-emerald-600' : 'text-zinc-400'}`}
+        >
+          <MoreHorizontal size={20} />
+          <span className="text-[10px] font-bold uppercase tracking-tighter">More</span>
+        </button>
+      </div>
+
+      <AnimatePresence>
+        {isMoreOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsMoreOpen(false)}
+              className="fixed inset-0 bg-black/20 z-40"
+            />
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              className="fixed bottom-16 left-0 right-0 bg-white rounded-t-2xl shadow-2xl z-50 p-6 space-y-4"
+            >
+              <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-4">More Actions</h3>
+              <div className="grid grid-cols-3 gap-4">
+                {moreItems.map(item => (
+                  <button
+                    key={item.id}
+                    onClick={() => { setActiveTab(item.id); setIsMoreOpen(false); }}
+                    className={`flex flex-col items-center gap-2 p-4 rounded-xl border ${activeTab === item.id ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-zinc-50 border-zinc-100 text-zinc-500'}`}
+                  >
+                    <item.icon size={20} />
+                    <span className="text-[10px] font-bold uppercase text-center">{item.label}</span>
+                  </button>
+                ))}
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
 
 const SearchableSelect = ({ items, onSelect, placeholder, label }: { items: any[], onSelect: (item: any) => void, placeholder: string, label: string }) => {
   const [query, setQuery] = useState('');
@@ -124,12 +208,18 @@ const SearchableSelect = ({ items, onSelect, placeholder, label }: { items: any[
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'sales' | 'inventory' | 'stock-arrival' | 'withdrawals' | 'profit'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'sales' | 'inventory' | 'stock-arrival' | 'withdrawals' | 'profit' | 'database'>('dashboard');
   const [products, setProducts] = useState<Product[]>([]);
   const [stats, setStats] = useState<DashboardStats>({ salesCount: 0, totalSales: 0, totalProfit: 0, lowStockCount: 0 });
   const [cart, setCart] = useState<SaleItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  
+  // Database Lab State
+  const [sqlQuery, setSqlQuery] = useState('SELECT * FROM products LIMIT 10;');
+  const [queryResults, setQueryResults] = useState<any[]>([]);
+  const [queryError, setQueryError] = useState<string | null>(null);
+  const [isExecuting, setIsExecuting] = useState(false);
   
   // History States
   const [saleHistory, setSaleHistory] = useState<any[]>([]);
@@ -388,6 +478,118 @@ export default function App() {
       alert('Network error while recording withdrawal');
     }
   };
+
+  const handleRunQuery = async () => {
+    setIsExecuting(true);
+    setQueryError(null);
+    try {
+      const res = await fetch('/api/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sql: sqlQuery })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setQueryResults(data.results);
+      } else {
+        setQueryError(data.error);
+      }
+    } catch (error) {
+      setQueryError('Network error while running query');
+    } finally {
+      setIsExecuting(false);
+    }
+  };
+
+  const renderDatabase = () => (
+    <div className="space-y-6 pb-20">
+      <div className="bg-white p-8 rounded-2xl border border-zinc-200 shadow-sm">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="p-2 bg-zinc-900 text-white rounded-lg"><Terminal size={20} /></div>
+          <div>
+            <h2 className="text-2xl font-serif italic text-zinc-900">Database Lab</h2>
+            <p className="text-xs text-zinc-500">Run direct SQL queries on your shop database. Be careful with DELETE or UPDATE!</p>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <textarea 
+            className="w-full p-4 bg-zinc-900 text-emerald-400 font-mono text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 min-h-[150px]"
+            value={sqlQuery}
+            onChange={(e) => setSqlQuery(e.target.value)}
+            placeholder="Enter SQL query here..."
+          />
+          <div className="flex justify-between items-center">
+            <div className="flex gap-2">
+              <button 
+                onClick={() => setSqlQuery('SELECT * FROM products;')}
+                className="text-[10px] bg-zinc-100 px-2 py-1 rounded hover:bg-zinc-200 font-bold uppercase"
+              >
+                Products
+              </button>
+              <button 
+                onClick={() => setSqlQuery('SELECT * FROM sales;')}
+                className="text-[10px] bg-zinc-100 px-2 py-1 rounded hover:bg-zinc-200 font-bold uppercase"
+              >
+                Sales
+              </button>
+              <button 
+                onClick={() => setSqlQuery('SELECT * FROM withdrawals;')}
+                className="text-[10px] bg-zinc-100 px-2 py-1 rounded hover:bg-zinc-200 font-bold uppercase"
+              >
+                Withdrawals
+              </button>
+            </div>
+            <button 
+              onClick={handleRunQuery}
+              disabled={isExecuting}
+              className="bg-emerald-600 text-white px-6 py-2 rounded-xl font-bold hover:bg-emerald-700 transition-all disabled:opacity-50 flex items-center gap-2"
+            >
+              {isExecuting ? 'Running...' : 'Execute Query'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {queryError && (
+        <div className="bg-red-50 border border-red-200 p-4 rounded-xl flex items-center gap-3 text-red-600 text-sm">
+          <AlertTriangle size={18} />
+          <span>{queryError}</span>
+        </div>
+      )}
+
+      {queryResults.length > 0 && (
+        <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-zinc-100 bg-zinc-50/50 flex justify-between items-center">
+            <h3 className="font-serif italic text-lg text-zinc-800">Query Results ({queryResults.length})</h3>
+            <button onClick={() => setQueryResults([])} className="text-xs text-zinc-400 hover:text-zinc-600">Clear Results</button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-zinc-50/50 text-[10px] font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">
+                  {Object.keys(queryResults[0]).map(key => (
+                    <th key={key} className="px-6 py-4">{key}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {queryResults.map((row, i) => (
+                  <tr key={i} className="hover:bg-zinc-50 transition-colors">
+                    {Object.values(row).map((val: any, j) => (
+                      <td key={j} className="px-6 py-4 text-xs text-zinc-600">
+                        {val === null ? <span className="text-zinc-300 italic">null</span> : val.toString()}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 
   const renderDashboard = () => (
     <div className="space-y-6">
@@ -1005,7 +1207,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#F8F9FA] flex font-sans text-zinc-900">
+    <div className="min-h-screen bg-[#F8F9FA] flex font-sans text-zinc-900 pb-16 md:pb-0">
       {/* Sidebar */}
       <aside className="w-64 border-r border-zinc-200 bg-white p-6 flex flex-col gap-8 hidden md:flex">
         <div className="flex items-center gap-2 px-2">
@@ -1029,6 +1231,7 @@ export default function App() {
           <SidebarItem icon={PlusCircle} label="Stock Arrival" active={activeTab === 'stock-arrival'} onClick={() => setActiveTab('stock-arrival')} />
           <SidebarItem icon={MinusCircle} label="Withdrawals" active={activeTab === 'withdrawals'} onClick={() => setActiveTab('withdrawals')} />
           <SidebarItem icon={History} label="Profit History" active={activeTab === 'profit'} onClick={() => setActiveTab('profit')} />
+          <SidebarItem icon={DatabaseIcon} label="Database Lab" active={activeTab === 'database'} onClick={() => setActiveTab('database')} />
         </nav>
       </aside>
 
@@ -1065,12 +1268,15 @@ export default function App() {
                   {activeTab === 'stock-arrival' && renderStockArrival()}
                   {activeTab === 'withdrawals' && renderWithdrawals()}
                   {activeTab === 'profit' && renderProfit()}
+                  {activeTab === 'database' && renderDatabase()}
                 </>
               )}
             </motion.div>
           </AnimatePresence>
         </div>
       </main>
+      {/* Mobile Nav */}
+      <MobileBottomNav activeTab={activeTab} setActiveTab={setActiveTab} stats={stats} />
     </div>
   );
 }
