@@ -224,6 +224,7 @@ export default function App() {
   // History States
   const [saleHistory, setSaleHistory] = useState<any[]>([]);
   const [withdrawalHistory, setWithdrawalHistory] = useState<any[]>([]);
+  const [monthlyHistory, setMonthlyHistory] = useState<any[]>([]);
   const [arrivalHistory, setArrivalHistory] = useState<any[]>([]);
 
   // New Product State (for Stock Arrival)
@@ -254,12 +255,14 @@ export default function App() {
       setStats(await statsRes.json());
       
       if (activeTab === 'profit') {
-        const [historyRes, withdrawalRes] = await Promise.all([
+        const [historyRes, withdrawalRes, monthlyRes] = await Promise.all([
           fetch('/api/sales/daily'),
-          fetch('/api/withdrawals')
+          fetch('/api/withdrawals'),
+          fetch('/api/sales/monthly')
         ]);
         setSaleHistory(await historyRes.json());
         setWithdrawalHistory(await withdrawalRes.json());
+        setMonthlyHistory(await monthlyRes.json());
       }
       if (activeTab === 'withdrawals') {
         const historyRes = await fetch('/api/withdrawals');
@@ -1083,13 +1086,56 @@ export default function App() {
     </div>
   );
 
+  const handleReset = async (type: 'daily' | 'monthly') => {
+    const msg = type === 'daily' 
+      ? 'Are you sure you want to RESET TODAY\'S SUMMARY? This will delete all sales and withdrawals for today. Stock will NOT be reverted.' 
+      : 'Are you sure you want to RESET THIS MONTH\'S SUMMARY? This will delete all sales and withdrawals for the current month. Stock will NOT be reverted.';
+    
+    if (!confirm(msg)) return;
+    if (!confirm('FINAL WARNING: This action is permanent. Are you absolutely sure?')) return;
+
+    try {
+      const res = await fetch(`/api/reset/${type}`, { method: 'POST' });
+      if (res.ok) {
+        await fetchData();
+        alert(`${type === 'daily' ? 'Today\'s' : 'This month\'s'} data has been reset.`);
+      } else {
+        alert('Failed to reset data');
+      }
+    } catch (error) {
+      console.error('Reset failed:', error);
+      alert('Network error while resetting');
+    }
+  };
+
   const renderProfit = () => {
     const totalSalesProfit = saleHistory.reduce((sum, s) => sum + s.total_profit, 0);
     const totalWithdrawals = withdrawalHistory.reduce((sum, w) => sum + w.amount, 0);
     const netProfit = totalSalesProfit - totalWithdrawals;
 
     return (
-      <div className="space-y-6 pb-20">
+      <div className="space-y-8 pb-20">
+        <div className="flex justify-between items-center">
+          <div>
+            <h2 className="text-3xl font-serif italic text-zinc-900">Profit History</h2>
+            <p className="text-xs text-zinc-500">Track your shop's performance and manage monthly summaries.</p>
+          </div>
+          <div className="flex gap-3">
+            <button 
+              onClick={() => handleReset('daily')}
+              className="px-4 py-2 border border-zinc-200 text-zinc-600 rounded-xl text-xs font-bold hover:bg-zinc-50 transition-all flex items-center gap-2"
+            >
+              <X size={14} /> Reset Today
+            </button>
+            <button 
+              onClick={() => handleReset('monthly')}
+              className="px-4 py-2 border border-zinc-200 text-zinc-600 rounded-xl text-xs font-bold hover:bg-zinc-50 transition-all flex items-center gap-2"
+            >
+              <History size={14} /> Reset Month
+            </button>
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm">
             <div className="flex items-center gap-3 mb-4">
@@ -1116,6 +1162,44 @@ export default function App() {
             </div>
             <div className="text-3xl font-bold">Rs. {netProfit.toLocaleString()}</div>
             <div className="mt-2 text-xs text-white/70">Final take-home profit today</div>
+          </div>
+        </div>
+
+        {/* Monthly Performance Table */}
+        <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
+          <div className="p-6 border-b border-zinc-100 bg-zinc-50/50">
+            <h2 className="text-xl font-serif italic text-zinc-900">Monthly Performance</h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-zinc-50/50 text-[10px] font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">
+                  <th className="px-6 py-4">Month</th>
+                  <th className="px-6 py-4">Total Sales</th>
+                  <th className="px-6 py-4">Gross Profit</th>
+                  <th className="px-6 py-4">Withdrawals</th>
+                  <th className="px-6 py-4">Net Profit</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {monthlyHistory.map((m, i) => (
+                  <tr key={i} className="hover:bg-zinc-50 transition-colors">
+                    <td className="px-6 py-4">
+                      <div className="text-sm font-bold text-zinc-900">
+                        {new Date(m.month + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-zinc-600">Rs. {m.total_sales.toLocaleString()}</td>
+                    <td className="px-6 py-4 text-sm font-bold text-emerald-600">Rs. {m.total_profit.toLocaleString()}</td>
+                    <td className="px-6 py-4 text-sm text-red-600">Rs. {(m.total_withdrawals || 0).toLocaleString()}</td>
+                    <td className="px-6 py-4 text-sm font-bold text-zinc-900">Rs. {(m.total_profit - (m.total_withdrawals || 0)).toLocaleString()}</td>
+                  </tr>
+                ))}
+                {monthlyHistory.length === 0 && (
+                  <tr><td colSpan={5} className="p-12 text-center text-zinc-400 italic text-sm">No monthly data available</td></tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
 
