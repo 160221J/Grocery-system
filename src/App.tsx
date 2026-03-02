@@ -1109,10 +1109,6 @@ export default function App() {
   };
 
   const renderProfit = () => {
-    const totalSalesProfit = saleHistory.reduce((sum, s) => sum + s.total_profit, 0);
-    const totalWithdrawals = withdrawalHistory.reduce((sum, w) => sum + w.amount, 0);
-    const netProfit = totalSalesProfit - totalWithdrawals;
-
     return (
       <div className="space-y-8 pb-20">
         <div className="flex justify-between items-center">
@@ -1133,35 +1129,6 @@ export default function App() {
             >
               <History size={14} /> Reset Month
             </button>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><TrendingUp size={18} /></div>
-              <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Sales Profit</span>
-            </div>
-            <div className="text-3xl font-bold text-zinc-900">Rs. {totalSalesProfit.toLocaleString()}</div>
-            <div className="mt-2 text-xs text-zinc-500">Gross profit from all bills</div>
-          </div>
-          
-          <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-2 bg-red-50 text-red-600 rounded-lg"><MinusCircle size={18} /></div>
-              <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Total Withdrawals</span>
-            </div>
-            <div className="text-3xl font-bold text-red-600">Rs. {totalWithdrawals.toLocaleString()}</div>
-            <div className="mt-2 text-xs text-zinc-500">Cash & items taken from shop</div>
-          </div>
-
-          <div className="bg-emerald-600 p-6 rounded-2xl shadow-lg shadow-emerald-600/20 text-white">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-2 bg-white/20 text-white rounded-lg"><DollarSign size={18} /></div>
-              <span className="text-xs font-bold text-white/70 uppercase tracking-widest">Net Profit</span>
-            </div>
-            <div className="text-3xl font-bold">Rs. {netProfit.toLocaleString()}</div>
-            <div className="mt-2 text-xs text-white/70">Final take-home profit today</div>
           </div>
         </div>
 
