@@ -740,29 +740,46 @@ export default function App() {
     </div>
   );
 
-  const renderInventory = () => (
-    <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
-      <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
-        <h2 className="text-2xl font-serif italic text-zinc-900">Inventory Management</h2>
-        <button onClick={() => setActiveTab('stock-arrival')} className="bg-zinc-900 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2">
-          <PlusCircle size={16} /> Add Stock
-        </button>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="bg-zinc-50/50 text-[11px] font-bold text-zinc-400 uppercase tracking-widest italic border-b border-zinc-100">
-              <th className="px-6 py-4">Product Name</th>
-              <th className="px-6 py-4">Unit</th>
-              <th className="px-6 py-4">Cost Price</th>
-              <th className="px-6 py-4">Selling Price</th>
-              <th className="px-6 py-4">Stock</th>
-              <th className="px-6 py-4">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-zinc-100">
-            {products.map(product => (
-              <tr key={product.id} className="hover:bg-zinc-50 transition-colors">
+  const renderInventory = () => {
+    const filteredProducts = products.filter(p => 
+      p.name.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+
+    return (
+      <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
+        <div className="p-4 md:p-6 border-b border-zinc-100 space-y-4">
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-xl md:text-2xl font-serif italic text-zinc-900">Inventory Management</h2>
+            <button onClick={() => setActiveTab('stock-arrival')} className="bg-zinc-900 text-white px-3 py-2 md:px-4 md:py-2 rounded-lg text-xs md:text-sm font-bold flex items-center gap-2 whitespace-nowrap">
+              <PlusCircle size={16} /> Add Stock
+            </button>
+          </div>
+          <div className="relative w-full md:max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
+            <input 
+              type="text"
+              placeholder="Search products..."
+              className="w-full pl-10 pr-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 text-sm"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-zinc-50/50 text-[11px] font-bold text-zinc-400 uppercase tracking-widest italic border-b border-zinc-100">
+                <th className="px-6 py-4">Product Name</th>
+                <th className="px-6 py-4">Unit</th>
+                <th className="px-6 py-4">Cost Price</th>
+                <th className="px-6 py-4">Selling Price</th>
+                <th className="px-6 py-4">Stock</th>
+                <th className="px-6 py-4">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {filteredProducts.map(product => (
+                <tr key={product.id} className="hover:bg-zinc-50 transition-colors">
                 <td className="px-6 py-4">
                   {editingProduct?.id === product.id ? (
                     <input 
@@ -828,11 +845,19 @@ export default function App() {
                 </td>
               </tr>
             ))}
-          </tbody>
-        </table>
+            {filteredProducts.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-6 py-12 text-center text-zinc-400 italic text-sm">
+                    No products found matching "{searchQuery}"
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderStockArrival = () => (
     <div className="space-y-8">
