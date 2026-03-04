@@ -20,6 +20,8 @@ import {
   Save,
   X,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Database as DatabaseIcon,
   Terminal,
   Menu,
@@ -214,6 +216,15 @@ export default function App() {
   const [cart, setCart] = useState<SaleItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+
+  // Pagination States
+  const [salesPage, setSalesPage] = useState(1);
+  const [inventoryPage, setInventoryPage] = useState(1);
+  const [stockArrivalPage, setStockArrivalPage] = useState(1);
+  const [withdrawalPage, setWithdrawalPage] = useState(1);
+  const [profitSalesPage, setProfitSalesPage] = useState(1);
+  const [profitWithdrawalPage, setProfitWithdrawalPage] = useState(1);
+  const ITEMS_PER_PAGE = 5;
   
   // Database Lab State
   const [sqlQuery, setSqlQuery] = useState('SELECT * FROM products LIMIT 10;');
@@ -242,6 +253,13 @@ export default function App() {
 
   useEffect(() => {
     fetchData();
+    // Reset pages when tab changes
+    setSalesPage(1);
+    setInventoryPage(1);
+    setStockArrivalPage(1);
+    setWithdrawalPage(1);
+    setProfitSalesPage(1);
+    setProfitWithdrawalPage(1);
   }, [activeTab]);
 
   const fetchData = async () => {
@@ -311,6 +329,35 @@ export default function App() {
       console.error('Undo failed:', error);
       alert('Network error while undoing withdrawal');
     }
+  };
+
+  const Pagination = ({ current, total, onPageChange }: { current: number, total: number, onPageChange: (p: number) => void }) => {
+    const totalPages = Math.ceil(total / ITEMS_PER_PAGE);
+    if (totalPages <= 1) return null;
+
+    return (
+      <div className="flex items-center justify-between px-6 py-4 bg-zinc-50/50 border-t border-zinc-100">
+        <div className="text-xs text-zinc-500">
+          Showing <span className="font-bold text-zinc-900">{Math.min(total, (current - 1) * ITEMS_PER_PAGE + 1)}</span> to <span className="font-bold text-zinc-900">{Math.min(total, current * ITEMS_PER_PAGE)}</span> of <span className="font-bold text-zinc-900">{total}</span>
+        </div>
+        <div className="flex gap-2">
+          <button
+            disabled={current === 1}
+            onClick={() => onPageChange(current - 1)}
+            className="p-2 rounded-lg border border-zinc-200 bg-white text-zinc-600 disabled:opacity-30 hover:bg-zinc-50 transition-colors"
+          >
+            <ChevronLeft size={16} />
+          </button>
+          <button
+            disabled={current === totalPages}
+            onClick={() => onPageChange(current + 1)}
+            className="p-2 rounded-lg border border-zinc-200 bg-white text-zinc-600 disabled:opacity-30 hover:bg-zinc-50 transition-colors"
+          >
+            <ChevronRight size={16} />
+          </button>
+        </div>
+      </div>
+    );
   };
 
   const handleUndoArrival = async (id: number, e: React.MouseEvent) => {
@@ -669,20 +716,22 @@ export default function App() {
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-          {products
-            .filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()))
-            .map(product => (
-              <button 
-                key={product.id}
-                onClick={() => addToCart(product)}
-                className="bg-white p-4 rounded-xl border border-zinc-200 text-left hover:border-emerald-500 hover:shadow-md transition-all group"
-              >
-                <div className="text-sm font-bold text-zinc-900 group-hover:text-emerald-600">{product.name}</div>
-                <div className="text-xs text-zinc-500 mt-1">Rs. {product.selling_price}</div>
-                <div className="text-[10px] text-zinc-400 mt-2">Stock: {product.quantity}</div>
-              </button>
-            ))}
+        <div className="max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            {products
+              .filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()))
+              .map(product => (
+                <button 
+                  key={product.id}
+                  onClick={() => addToCart(product)}
+                  className="bg-white p-4 rounded-xl border border-zinc-200 text-left hover:border-emerald-500 hover:shadow-md transition-all group"
+                >
+                  <div className="text-sm font-bold text-zinc-900 group-hover:text-emerald-600">{product.name}</div>
+                  <div className="text-xs text-zinc-500 mt-1">Rs. {product.selling_price}</div>
+                  <div className="text-[10px] text-zinc-400 mt-2">Stock: {product.quantity}</div>
+                </button>
+              ))}
+          </div>
         </div>
       </div>
 
@@ -765,89 +814,116 @@ export default function App() {
             />
           </div>
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-h-[600px] overflow-y-auto custom-scrollbar">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="bg-zinc-50/50 text-[11px] font-bold text-zinc-400 uppercase tracking-widest italic border-b border-zinc-100">
+              <tr className="bg-zinc-50/50 text-[11px] font-bold text-zinc-400 uppercase tracking-widest italic border-b border-zinc-100 sticky top-0 z-10">
                 <th className="px-6 py-4">Product Name</th>
                 <th className="px-6 py-4">Unit</th>
                 <th className="px-6 py-4">Cost Price</th>
                 <th className="px-6 py-4">Selling Price</th>
                 <th className="px-6 py-4">Stock</th>
+                <th className="px-6 py-4">Min Stock</th>
                 <th className="px-6 py-4">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100">
               {filteredProducts.map(product => (
                 <tr key={product.id} className="hover:bg-zinc-50 transition-colors">
-                <td className="px-6 py-4">
-                  {editingProduct?.id === product.id ? (
-                    <input 
-                      className="p-1 border rounded text-sm w-full" 
-                      value={editingProduct.name} 
-                      onChange={e => setEditingProduct({...editingProduct, name: e.target.value})}
-                    />
-                  ) : (
-                    <span className="text-sm font-bold text-zinc-900">{product.name}</span>
-                  )}
-                </td>
-                <td className="px-6 py-4 text-xs text-zinc-500 capitalize">{product.unit_type}</td>
-                <td className="px-6 py-4 text-sm">
-                  {editingProduct?.id === product.id ? (
-                    <input 
-                      type="number"
-                      className="p-1 border rounded text-sm w-24" 
-                      value={editingProduct.cost_price || ''} 
-                      onChange={e => setEditingProduct({...editingProduct, cost_price: e.target.value === '' ? 0 : parseFloat(e.target.value)})}
-                    />
-                  ) : (
-                    <span>Rs. {product.cost_price}</span>
-                  )}
-                </td>
-                <td className="px-6 py-4 text-sm">
-                  {editingProduct?.id === product.id ? (
-                    <input 
-                      type="number"
-                      className="p-1 border rounded text-sm w-24" 
-                      value={editingProduct.selling_price || ''} 
-                      onChange={e => setEditingProduct({...editingProduct, selling_price: e.target.value === '' ? 0 : parseFloat(e.target.value)})}
-                    />
-                  ) : (
-                    <span>Rs. {product.selling_price}</span>
-                  )}
-                </td>
-                <td className="px-6 py-4">
-                  {editingProduct?.id === product.id ? (
-                    <input 
-                      type="number"
-                      className="p-1 border rounded text-sm w-24" 
-                      value={editingProduct.quantity || ''} 
-                      onChange={e => setEditingProduct({...editingProduct, quantity: e.target.value === '' ? 0 : parseFloat(e.target.value)})}
-                    />
-                  ) : (
-                    <span className={`text-sm font-bold ${product.quantity <= product.min_stock ? 'text-red-600' : 'text-zinc-900'}`}>
-                      {product.quantity}
-                    </span>
-                  )}
-                </td>
-                <td className="px-6 py-4">
-                  {editingProduct?.id === product.id ? (
-                    <div className="flex gap-2">
-                      <button onClick={handleUpdateProduct} className="text-emerald-600 hover:text-emerald-700"><Save size={16} /></button>
-                      <button onClick={() => setEditingProduct(null)} className="text-zinc-400 hover:text-zinc-600"><X size={16} /></button>
-                    </div>
-                  ) : (
-                    <div className="flex gap-3">
-                      <button onClick={() => setEditingProduct(product)} className="text-emerald-600 hover:text-emerald-700"><Edit2 size={16} /></button>
-                      <button onClick={() => handleDeleteProduct(product.id)} className="text-zinc-300 hover:text-red-600 transition-colors"><Trash2 size={16} /></button>
-                    </div>
-                  )}
-                </td>
-              </tr>
-            ))}
-            {filteredProducts.length === 0 && (
+                  <td className="px-6 py-4">
+                    {editingProduct?.id === product.id ? (
+                      <input 
+                        className="p-1 border rounded text-sm w-full" 
+                        value={editingProduct.name} 
+                        onChange={e => setEditingProduct({...editingProduct, name: e.target.value})}
+                      />
+                    ) : (
+                      <span className="text-sm font-bold text-zinc-900">{product.name}</span>
+                    )}
+                  </td>
+                  <td className="px-6 py-4 text-xs text-zinc-500 capitalize">
+                    {editingProduct?.id === product.id ? (
+                      <select 
+                        className="p-1 border rounded text-xs w-full"
+                        value={editingProduct.unit_type}
+                        onChange={e => setEditingProduct({...editingProduct, unit_type: e.target.value as any})}
+                      >
+                        <option value="unit">Unit</option>
+                        <option value="weight">Weight</option>
+                        <option value="volume">Volume</option>
+                      </select>
+                    ) : (
+                      product.unit_type
+                    )}
+                  </td>
+                  <td className="px-6 py-4 text-sm">
+                    {editingProduct?.id === product.id ? (
+                      <input 
+                        type="number"
+                        className="p-1 border rounded text-sm w-24" 
+                        value={editingProduct.cost_price || ''} 
+                        onChange={e => setEditingProduct({...editingProduct, cost_price: e.target.value === '' ? 0 : parseFloat(e.target.value)})}
+                      />
+                    ) : (
+                      <span>Rs. {product.cost_price}</span>
+                    )}
+                  </td>
+                  <td className="px-6 py-4 text-sm">
+                    {editingProduct?.id === product.id ? (
+                      <input 
+                        type="number"
+                        className="p-1 border rounded text-sm w-24" 
+                        value={editingProduct.selling_price || ''} 
+                        onChange={e => setEditingProduct({...editingProduct, selling_price: e.target.value === '' ? 0 : parseFloat(e.target.value)})}
+                      />
+                    ) : (
+                      <span>Rs. {product.selling_price}</span>
+                    )}
+                  </td>
+                  <td className="px-6 py-4">
+                    {editingProduct?.id === product.id ? (
+                      <input 
+                        type="number"
+                        className="p-1 border rounded text-sm w-24" 
+                        value={editingProduct.quantity || ''} 
+                        onChange={e => setEditingProduct({...editingProduct, quantity: e.target.value === '' ? 0 : parseFloat(e.target.value)})}
+                      />
+                    ) : (
+                      <span className={`text-sm font-bold ${product.quantity <= product.min_stock ? 'text-red-600' : 'text-zinc-900'}`}>
+                        {product.quantity}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-6 py-4">
+                    {editingProduct?.id === product.id ? (
+                      <input 
+                        type="number"
+                        className="p-1 border rounded text-sm w-24" 
+                        value={editingProduct.min_stock || ''} 
+                        onChange={e => setEditingProduct({...editingProduct, min_stock: e.target.value === '' ? 0 : parseFloat(e.target.value)})}
+                      />
+                    ) : (
+                      <span className="text-sm text-zinc-500">{product.min_stock}</span>
+                    )}
+                  </td>
+                  <td className="px-6 py-4">
+                    {editingProduct?.id === product.id ? (
+                      <div className="flex gap-2">
+                        <button onClick={handleUpdateProduct} className="text-emerald-600 hover:text-emerald-700"><Save size={16} /></button>
+                        <button onClick={() => setEditingProduct(null)} className="text-zinc-400 hover:text-zinc-600"><X size={16} /></button>
+                      </div>
+                    ) : (
+                      <div className="flex gap-3">
+                        <button onClick={() => setEditingProduct(product)} className="text-emerald-600 hover:text-emerald-700"><Edit2 size={16} /></button>
+                        <button onClick={() => handleDeleteProduct(product.id)} className="text-zinc-300 hover:text-red-600 transition-colors"><Trash2 size={16} /></button>
+                      </div>
+                    ) }
+                  </td>
+                </tr>
+              ))}
+              {filteredProducts.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-zinc-400 italic text-sm">
+                  <td colSpan={7} className="px-6 py-12 text-center text-zinc-400 italic text-sm">
                     No products found matching "{searchQuery}"
                   </td>
                 </tr>
@@ -985,26 +1061,33 @@ export default function App() {
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100">
-              {arrivalHistory.slice(0, 10).map(arrival => (
-                <tr key={arrival.id} className="hover:bg-zinc-50 transition-colors">
-                  <td className="px-6 py-4 text-sm font-bold text-zinc-900">{arrival.product_name}</td>
-                  <td className="px-6 py-4 text-sm">{arrival.quantity}</td>
-                  <td className="px-6 py-4 text-sm">Rs. {arrival.cost_price}</td>
-                  <td className="px-6 py-4 text-xs text-zinc-500">{new Date(arrival.created_at).toLocaleDateString()}</td>
-                  <td className="px-6 py-4 text-right">
-                    <button 
-                      type="button" 
-                      onClick={(e) => handleUndoArrival(arrival.id, e)} 
-                      className="p-2 text-zinc-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all relative z-20"
-                      title="Undo Arrival"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {arrivalHistory
+                .slice((stockArrivalPage - 1) * ITEMS_PER_PAGE, stockArrivalPage * ITEMS_PER_PAGE)
+                .map(arrival => (
+                  <tr key={arrival.id} className="hover:bg-zinc-50 transition-colors">
+                    <td className="px-6 py-4 text-sm font-bold text-zinc-900">{arrival.product_name}</td>
+                    <td className="px-6 py-4 text-sm">{arrival.quantity}</td>
+                    <td className="px-6 py-4 text-sm">Rs. {arrival.cost_price}</td>
+                    <td className="px-6 py-4 text-xs text-zinc-500">{new Date(arrival.created_at).toLocaleDateString()}</td>
+                    <td className="px-6 py-4 text-right">
+                      <button 
+                        type="button" 
+                        onClick={(e) => handleUndoArrival(arrival.id, e)} 
+                        className="p-2 text-zinc-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all relative z-20"
+                        title="Undo Arrival"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
             </tbody>
           </table>
+          <Pagination 
+            current={stockArrivalPage} 
+            total={arrivalHistory.length} 
+            onPageChange={setStockArrivalPage} 
+          />
         </div>
       </div>
     </div>
@@ -1086,26 +1169,33 @@ export default function App() {
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100">
-              {withdrawalHistory.map(w => (
-                <tr key={w.id} className="hover:bg-zinc-50 transition-colors">
-                  <td className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-zinc-500">{w.type}</td>
-                  <td className="px-6 py-4 text-sm font-bold text-red-600">Rs. {w.amount}</td>
-                  <td className="px-6 py-4 text-sm text-zinc-600">{w.description}</td>
-                  <td className="px-6 py-4 text-xs text-zinc-500">{new Date(w.created_at).toLocaleDateString()}</td>
-                  <td className="px-6 py-4 text-right">
-                    <button 
-                      type="button" 
-                      onClick={(e) => handleUndoWithdrawal(w.id, e)} 
-                      className="p-2 text-zinc-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all relative z-20"
-                      title="Undo Withdrawal"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {withdrawalHistory
+                .slice((withdrawalPage - 1) * ITEMS_PER_PAGE, withdrawalPage * ITEMS_PER_PAGE)
+                .map(w => (
+                  <tr key={w.id} className="hover:bg-zinc-50 transition-colors">
+                    <td className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-zinc-500">{w.type}</td>
+                    <td className="px-6 py-4 text-sm font-bold text-red-600">Rs. {w.amount}</td>
+                    <td className="px-6 py-4 text-sm text-zinc-600">{w.description}</td>
+                    <td className="px-6 py-4 text-xs text-zinc-500">{new Date(w.created_at).toLocaleDateString()}</td>
+                    <td className="px-6 py-4 text-right">
+                      <button 
+                        type="button" 
+                        onClick={(e) => handleUndoWithdrawal(w.id, e)} 
+                        className="p-2 text-zinc-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all relative z-20"
+                        title="Undo Withdrawal"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
             </tbody>
           </table>
+          <Pagination 
+            current={withdrawalPage} 
+            total={withdrawalHistory.length} 
+            onPageChange={setWithdrawalPage} 
+          />
         </div>
       </div>
     </div>
@@ -1210,30 +1300,37 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
-                  {saleHistory.map(sale => (
-                    <tr key={sale.id} className="hover:bg-zinc-50 transition-colors group">
-                      <td className="px-6 py-4">
-                        <div className="text-sm font-bold text-zinc-900">#{sale.id.toString().padStart(4, '0')}</div>
-                        <div className="text-[10px] text-zinc-400">{new Date(sale.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
-                      </td>
-                      <td className="px-6 py-4 text-sm font-bold text-emerald-600">Rs. {sale.total_profit.toLocaleString()}</td>
-                      <td className="px-6 py-4 text-right">
-                        <button 
-                          type="button"
-                          onClick={(e) => handleUndoSale(sale.id, e)}
-                          className="p-2 text-zinc-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all relative z-20"
-                          title="Undo Sale"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {saleHistory
+                    .slice((profitSalesPage - 1) * ITEMS_PER_PAGE, profitSalesPage * ITEMS_PER_PAGE)
+                    .map(sale => (
+                      <tr key={sale.id} className="hover:bg-zinc-50 transition-colors group">
+                        <td className="px-6 py-4">
+                          <div className="text-sm font-bold text-zinc-900">#{sale.id.toString().padStart(4, '0')}</div>
+                          <div className="text-[10px] text-zinc-400">{new Date(sale.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                        </td>
+                        <td className="px-6 py-4 text-sm font-bold text-emerald-600">Rs. {sale.total_profit.toLocaleString()}</td>
+                        <td className="px-6 py-4 text-right">
+                          <button 
+                            type="button"
+                            onClick={(e) => handleUndoSale(sale.id, e)}
+                            className="p-2 text-zinc-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all relative z-20"
+                            title="Undo Sale"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
                   {saleHistory.length === 0 && (
                     <tr><td colSpan={3} className="p-12 text-center text-zinc-400 italic text-sm">No sales today</td></tr>
                   )}
                 </tbody>
               </table>
+              <Pagination 
+                current={profitSalesPage} 
+                total={saleHistory.length} 
+                onPageChange={setProfitSalesPage} 
+              />
             </div>
           </div>
 
@@ -1251,30 +1348,37 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
-                  {withdrawalHistory.map(w => (
-                    <tr key={w.id} className="hover:bg-zinc-50 transition-colors group">
-                      <td className="px-6 py-4">
-                        <div className="text-sm font-bold text-zinc-900">{w.description || 'No description'}</div>
-                        <div className="text-[10px] text-zinc-400 capitalize">{w.type} withdrawal</div>
-                      </td>
-                      <td className="px-6 py-4 text-sm font-bold text-red-600">Rs. {w.amount.toLocaleString()}</td>
-                      <td className="px-6 py-4 text-right">
-                        <button 
-                          type="button"
-                          onClick={(e) => handleUndoWithdrawal(w.id, e)}
-                          className="p-2 text-zinc-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all relative z-20"
-                          title="Undo Withdrawal"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {withdrawalHistory
+                    .slice((profitWithdrawalPage - 1) * ITEMS_PER_PAGE, profitWithdrawalPage * ITEMS_PER_PAGE)
+                    .map(w => (
+                      <tr key={w.id} className="hover:bg-zinc-50 transition-colors group">
+                        <td className="px-6 py-4">
+                          <div className="text-sm font-bold text-zinc-900">{w.description || 'No description'}</div>
+                          <div className="text-[10px] text-zinc-400 capitalize">{w.type} withdrawal</div>
+                        </td>
+                        <td className="px-6 py-4 text-sm font-bold text-red-600">Rs. {w.amount.toLocaleString()}</td>
+                        <td className="px-6 py-4 text-right">
+                          <button 
+                            type="button"
+                            onClick={(e) => handleUndoWithdrawal(w.id, e)}
+                            className="p-2 text-zinc-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all relative z-20"
+                            title="Undo Withdrawal"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
                   {withdrawalHistory.length === 0 && (
                     <tr><td colSpan={3} className="p-12 text-center text-zinc-400 italic text-sm">No withdrawals today</td></tr>
                   )}
                 </tbody>
               </table>
+              <Pagination 
+                current={profitWithdrawalPage} 
+                total={withdrawalHistory.length} 
+                onPageChange={setProfitWithdrawalPage} 
+              />
             </div>
           </div>
         </div>
