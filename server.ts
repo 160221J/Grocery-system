@@ -118,9 +118,9 @@ async function startServer() {
 
   app.patch("/api/products/:id", (req, res) => {
     try {
-      const { cost_price, selling_price, quantity, min_stock } = req.body;
-      db.prepare("UPDATE products SET cost_price = ?, selling_price = ?, quantity = ?, min_stock = ? WHERE id = ?")
-        .run(cost_price, selling_price, quantity, min_stock, req.params.id);
+      const { name, cost_price, selling_price, quantity, min_stock } = req.body;
+      db.prepare("UPDATE products SET name = ?, cost_price = ?, selling_price = ?, quantity = ?, min_stock = ? WHERE id = ?")
+        .run(name, cost_price, selling_price, quantity, min_stock, req.params.id);
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: error.message });
