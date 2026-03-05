@@ -45,6 +45,8 @@ interface SaleItem {
   name: string;
   quantity: number;
   selling_price: number;
+  unit_type: 'unit' | 'weight' | 'volume';
+  selected_unit: string;
 }
 
 interface DashboardStats {
@@ -419,10 +421,19 @@ export default function App() {
 
   const addToCart = (product: Product) => {
     const existing = cart.find(item => item.product_id === product.id);
+    const defaultUnit = product.unit_type === 'weight' ? 'kg' : (product.unit_type === 'volume' ? 'bottle' : 'unit');
+    
     if (existing) {
       setCart(cart.map(item => item.product_id === product.id ? { ...item, quantity: item.quantity + 1 } : item));
     } else {
-      setCart([...cart, { product_id: product.id, name: product.name, quantity: 1, selling_price: product.selling_price }]);
+      setCart([...cart, { 
+        product_id: product.id, 
+        name: product.name, 
+        quantity: 1, 
+        selling_price: product.selling_price,
+        unit_type: product.unit_type,
+        selected_unit: defaultUnit
+      }]);
     }
   };
 
@@ -436,11 +447,27 @@ export default function App() {
 
   const handleCheckout = async () => {
     if (cart.length === 0) return;
+    
+    const itemsToSubmit = cart.map(item => {
+      let qty = item.quantity;
+      if (item.selected_unit === 'g') {
+        qty = qty / 1000;
+      } else if (item.selected_unit === 'quarter') {
+        qty = qty / 4;
+      }
+      return {
+        product_id: item.product_id,
+        name: item.name,
+        quantity: qty,
+        selling_price: item.selling_price
+      };
+    });
+
     try {
       const res = await fetch('/api/sales', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items: cart })
+        body: JSON.stringify({ items: itemsToSubmit })
       });
       if (res.ok) {
         setCart([]);
@@ -735,11 +762,11 @@ export default function App() {
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl border border-zinc-200 shadow-lg flex flex-col h-[calc(100vh-12rem)]">
+      <div className="bg-white rounded-2xl border border-zinc-200 shadow-lg flex flex-col">
         <div className="p-6 border-b border-zinc-100">
           <h3 className="font-serif italic text-xl text-zinc-900">Current Bill</h3>
         </div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="p-4 space-y-4">
           {cart.map(item => (
             <div key={item.product_id} className="flex flex-col gap-2 p-3 bg-zinc-50 rounded-lg border border-zinc-100">
               <div className="flex items-center justify-between">
@@ -747,23 +774,50 @@ export default function App() {
                 <button onClick={() => removeFromCart(item.product_id)} className="text-zinc-400 hover:text-red-600"><Trash2 size={14} /></button>
               </div>
               <div className="flex items-center gap-2">
-                <div className="flex-1">
+                <div className="flex-[4]">
                   <label className="text-[10px] text-zinc-400 uppercase font-bold">Qty</label>
-                  <input 
-                    type="number" 
-                    value={item.quantity || ''} 
-                    onChange={(e) => updateCartItem(item.product_id, 'quantity', e.target.value === '' ? 0 : parseFloat(e.target.value))}
-                    className="w-full bg-white border border-zinc-200 rounded px-2 py-1 text-sm"
-                  />
+                  <div className="flex gap-1">
+                    <input 
+                      type="number" 
+                      value={item.quantity || ''} 
+                      onChange={(e) => updateCartItem(item.product_id, 'quantity', e.target.value === '' ? 0 : parseFloat(e.target.value))}
+                      className="w-full bg-white border border-zinc-200 rounded px-2 py-1 text-sm min-w-[50px]"
+                    />
+                    {item.unit_type !== 'unit' && (
+                      <select
+                        value={item.selected_unit}
+                        onChange={(e) => updateCartItem(item.product_id, 'selected_unit', e.target.value)}
+                        className="bg-zinc-100 border border-zinc-200 rounded px-1 py-1 text-[10px] font-bold shrink-0"
+                      >
+                        {item.unit_type === 'weight' ? (
+                          <>
+                            <option value="kg">kg</option>
+                            <option value="g">g</option>
+                          </>
+                        ) : (
+                          <>
+                            <option value="bottle">btl</option>
+                            <option value="quarter">qtr</option>
+                          </>
+                        )}
+                      </select>
+                    )}
+                  </div>
                 </div>
-                <div className="flex-1">
-                  <label className="text-[10px] text-zinc-400 uppercase font-bold">Price</label>
+                <div className="flex-[2]">
+                  <label className="text-[10px] text-zinc-400 uppercase font-bold truncate">Price</label>
                   <input 
                     type="number" 
                     value={item.selling_price || ''} 
                     onChange={(e) => updateCartItem(item.product_id, 'selling_price', e.target.value === '' ? 0 : parseFloat(e.target.value))}
                     className="w-full bg-white border border-zinc-200 rounded px-2 py-1 text-sm"
                   />
+                </div>
+                <div className="flex-[1.5] text-right">
+                  <label className="text-[10px] text-zinc-400 uppercase font-bold block">Total</label>
+                  <span className="text-xs font-bold text-zinc-900">
+                    {( (item.selected_unit === 'g' ? item.quantity / 1000 : (item.selected_unit === 'quarter' ? item.quantity / 4 : item.quantity)) * item.selling_price ).toLocaleString()}
+                  </span>
                 </div>
               </div>
             </div>
@@ -775,7 +829,15 @@ export default function App() {
         <div className="p-6 border-t border-zinc-100 bg-zinc-50/50 space-y-4">
           <div className="flex items-center justify-between font-bold text-lg">
             <span>Total</span>
-            <span>Rs. {cart.reduce((sum, item) => sum + (item.quantity * item.selling_price), 0).toLocaleString()}</span>
+            <span>Rs. {cart.reduce((sum, item) => {
+              let qty = item.quantity;
+              if (item.selected_unit === 'g') {
+                qty = qty / 1000;
+              } else if (item.selected_unit === 'quarter') {
+                qty = qty / 4;
+              }
+              return sum + (qty * item.selling_price);
+            }, 0).toLocaleString()}</span>
           </div>
           <button 
             onClick={handleCheckout}
@@ -850,10 +912,10 @@ export default function App() {
                       >
                         <option value="unit">Unit</option>
                         <option value="weight">Weight</option>
-                        <option value="volume">Volume</option>
+                        <option value="volume">Bottle</option>
                       </select>
                     ) : (
-                      product.unit_type
+                      product.unit_type === 'volume' ? 'bottle' : product.unit_type
                     )}
                   </td>
                   <td className="px-6 py-4 text-sm">
@@ -970,7 +1032,7 @@ export default function App() {
                 >
                   <option value="unit">Unit (Packet)</option>
                   <option value="weight">Weight (kg)</option>
-                  <option value="volume">Volume (L)</option>
+                  <option value="volume">Bottle (Bottle)</option>
                 </select>
               </div>
               <div>
