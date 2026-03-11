@@ -47,6 +47,7 @@ interface SaleItem {
   selling_price: number;
   unit_type: 'unit' | 'weight' | 'volume';
   selected_unit: string;
+  manual_total?: number;
 }
 
 interface DashboardStats {
@@ -240,15 +241,19 @@ export default function App() {
   const [monthlyHistory, setMonthlyHistory] = useState<any[]>([]);
   const [arrivalHistory, setArrivalHistory] = useState<any[]>([]);
 
-  // New Product State (for Stock Arrival)
-  const [isNewProduct, setIsNewProduct] = useState(false);
-  const [newProductForm, setNewProductForm] = useState({ name: '', unit_type: 'unit', cost_price: 0, selling_price: 0, quantity: 0, min_stock: 5 });
+  // Stock Arrival State
+  const [arrivalSearchQuery, setArrivalSearchQuery] = useState('');
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [arrivalForm, setArrivalForm] = useState({ 
+    quantity: 0, 
+    cost_price: 0,
+    selling_price: 0,
+    unit_type: 'unit' as 'unit' | 'weight' | 'volume',
+    min_stock: 5
+  });
 
   // Editing State
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-
-  // Stock Arrival State
-  const [arrivalForm, setArrivalForm] = useState({ product_id: 0, quantity: 0, cost_price: 0 });
   
   // Withdrawal State
   const [withdrawalForm, setWithdrawalForm] = useState({ type: 'cash', product_id: 0, amount: 0, description: '' });
@@ -396,26 +401,74 @@ export default function App() {
     }
   };
 
-  const handleCreateProduct = async (e: React.FormEvent) => {
+  const handleStockArrival = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (!arrivalSearchQuery.trim()) {
+      alert('Please enter a product name');
+      return;
+    }
+
     try {
-      const res = await fetch('/api/products', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newProductForm)
-      });
-      if (res.ok) {
-        setIsNewProduct(false);
-        setNewProductForm({ name: '', unit_type: 'unit', cost_price: 0, selling_price: 0, quantity: 0, min_stock: 5 });
-        fetchData();
-        alert('New product added!');
+      let productId = selectedProduct?.id;
+
+      // If no product selected, check if name matches existing product
+      if (!productId) {
+        const existing = products.find(p => p.name.toLowerCase() === arrivalSearchQuery.toLowerCase());
+        if (existing) {
+          productId = existing.id;
+        }
+      }
+
+      if (productId) {
+        // Existing Product Arrival
+        const res = await fetch('/api/stock-arrivals', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            product_id: productId,
+            quantity: arrivalForm.quantity,
+            cost_price: arrivalForm.cost_price
+          })
+        });
+        if (res.ok) {
+          setArrivalForm({ quantity: 0, cost_price: 0, selling_price: 0, unit_type: 'unit', min_stock: 5 });
+          setArrivalSearchQuery('');
+          setSelectedProduct(null);
+          fetchData();
+          alert('Stock updated!');
+        } else {
+          const err = await res.json();
+          alert(`Failed to update stock: ${err.error}`);
+        }
       } else {
-        const err = await res.json();
-        alert(`Failed to add product: ${err.error}`);
+        // New Product Creation + Arrival
+        const res = await fetch('/api/products', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: arrivalSearchQuery,
+            unit_type: arrivalForm.unit_type,
+            cost_price: arrivalForm.cost_price,
+            selling_price: arrivalForm.selling_price,
+            quantity: arrivalForm.quantity,
+            min_stock: arrivalForm.min_stock
+          })
+        });
+        if (res.ok) {
+          setArrivalForm({ quantity: 0, cost_price: 0, selling_price: 0, unit_type: 'unit', min_stock: 5 });
+          setArrivalSearchQuery('');
+          setSelectedProduct(null);
+          fetchData();
+          alert('New product added and stock recorded!');
+        } else {
+          const err = await res.json();
+          alert(`Failed to add product: ${err.error}`);
+        }
       }
     } catch (error) {
-      console.error('Creation failed:', error);
-      alert('Network error while adding product');
+      console.error('Stock arrival failed:', error);
+      alert('Network error while processing stock arrival');
     }
   };
 
@@ -438,7 +491,17 @@ export default function App() {
   };
 
   const updateCartItem = (productId: number, field: keyof SaleItem, value: any) => {
-    setCart(cart.map(item => item.product_id === productId ? { ...item, [field]: value } : item));
+    setCart(cart.map(item => {
+      if (item.product_id === productId) {
+        const newItem = { ...item, [field]: value };
+        // Reset manual total if quantity or unit changes
+        if (field === 'quantity' || field === 'selected_unit') {
+          delete newItem.manual_total;
+        }
+        return newItem;
+      }
+      return item;
+    }));
   };
 
   const removeFromCart = (productId: number) => {
@@ -455,11 +518,18 @@ export default function App() {
       } else if (item.selected_unit === 'quarter') {
         qty = qty / 4;
       }
+      
+      // If manual total is set, calculate the effective selling price
+      let effectiveSellingPrice = item.selling_price;
+      if (item.manual_total !== undefined && item.manual_total !== null) {
+        effectiveSellingPrice = item.manual_total / qty;
+      }
+
       return {
         product_id: item.product_id,
         name: item.name,
         quantity: qty,
-        selling_price: item.selling_price
+        selling_price: effectiveSellingPrice
       };
     });
 
@@ -500,31 +570,6 @@ export default function App() {
     }
   };
 
-  const handleStockArrival = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (arrivalForm.product_id === 0) {
-      alert('Please select a product first');
-      return;
-    }
-    try {
-      const res = await fetch('/api/stock-arrivals', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(arrivalForm)
-      });
-      if (res.ok) {
-        setArrivalForm({ product_id: 0, quantity: 0, cost_price: 0 });
-        fetchData();
-        alert('Stock updated!');
-      } else {
-        const err = await res.json();
-        alert(`Failed to update stock: ${err.error}`);
-      }
-    } catch (error) {
-      console.error('Stock arrival failed:', error);
-      alert('Network error while updating stock');
-    }
-  };
 
   const handleWithdrawal = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -806,18 +851,18 @@ export default function App() {
                 </div>
                 <div className="flex-[2]">
                   <label className="text-[10px] text-zinc-400 uppercase font-bold truncate">Price</label>
+                  <div className="text-sm font-medium text-zinc-600 py-1">
+                    {item.selling_price}
+                  </div>
+                </div>
+                <div className="flex-[2.5] text-right">
+                  <label className="text-[10px] text-zinc-400 uppercase font-bold block">Total</label>
                   <input 
                     type="number" 
-                    value={item.selling_price || ''} 
-                    onChange={(e) => updateCartItem(item.product_id, 'selling_price', e.target.value === '' ? 0 : parseFloat(e.target.value))}
-                    className="w-full bg-white border border-zinc-200 rounded px-2 py-1 text-sm"
+                    value={item.manual_total !== undefined ? item.manual_total : ( (item.selected_unit === 'g' ? item.quantity / 1000 : (item.selected_unit === 'quarter' ? item.quantity / 4 : item.quantity)) * item.selling_price )} 
+                    onChange={(e) => updateCartItem(item.product_id, 'manual_total', e.target.value === '' ? undefined : parseFloat(e.target.value))}
+                    className={`w-full bg-white border rounded px-2 py-1 text-sm font-bold text-right ${item.manual_total !== undefined ? 'border-emerald-500 text-emerald-700' : 'border-zinc-200 text-zinc-900'}`}
                   />
-                </div>
-                <div className="flex-[1.5] text-right">
-                  <label className="text-[10px] text-zinc-400 uppercase font-bold block">Total</label>
-                  <span className="text-xs font-bold text-zinc-900">
-                    {( (item.selected_unit === 'g' ? item.quantity / 1000 : (item.selected_unit === 'quarter' ? item.quantity / 4 : item.quantity)) * item.selling_price ).toLocaleString()}
-                  </span>
                 </div>
               </div>
             </div>
@@ -830,6 +875,7 @@ export default function App() {
           <div className="flex items-center justify-between font-bold text-lg">
             <span>Total</span>
             <span>Rs. {cart.reduce((sum, item) => {
+              if (item.manual_total !== undefined) return sum + item.manual_total;
               let qty = item.quantity;
               if (item.selected_unit === 'g') {
                 qty = qty / 1000;
@@ -997,86 +1043,95 @@ export default function App() {
     );
   };
 
-  const renderStockArrival = () => (
-    <div className="space-y-8">
-      <div className="max-w-2xl mx-auto bg-white p-8 rounded-2xl border border-zinc-200 shadow-sm">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-serif italic text-zinc-900">Stock Arrival</h2>
-          <button 
-            onClick={() => setIsNewProduct(!isNewProduct)}
-            className="text-xs font-bold text-emerald-600 hover:underline"
-          >
-            {isNewProduct ? 'Add Existing Product' : 'Add New Product'}
-          </button>
-        </div>
+  const renderStockArrival = () => {
+    const filteredSearch = products.filter(p => 
+      p.name.toLowerCase().includes(arrivalSearchQuery.toLowerCase())
+    );
+    const isExisting = selectedProduct !== null || products.some(p => p.name.toLowerCase() === arrivalSearchQuery.toLowerCase());
 
-        {isNewProduct ? (
-          <form onSubmit={handleCreateProduct} className="space-y-4">
-            <div>
+    return (
+      <div className="space-y-8">
+        <div className="max-w-2xl mx-auto bg-white p-8 rounded-2xl border border-zinc-200 shadow-sm">
+          <h2 className="text-2xl font-serif italic text-zinc-900 mb-6">Stock Arrival</h2>
+          
+          <form onSubmit={handleStockArrival} className="space-y-4">
+            <div className="relative">
               <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Product Name</label>
               <input 
                 type="text" 
                 className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                value={newProductForm.name}
-                onChange={(e) => setNewProductForm({ ...newProductForm, name: e.target.value })}
+                value={arrivalSearchQuery}
+                onChange={(e) => {
+                  setArrivalSearchQuery(e.target.value);
+                  setSelectedProduct(null);
+                }}
+                placeholder="Search or enter new name..."
                 required
               />
+              {arrivalSearchQuery && !selectedProduct && filteredSearch.length > 0 && (
+                <div className="absolute z-50 w-full mt-1 bg-white border border-zinc-200 rounded-xl shadow-xl max-h-60 overflow-y-auto">
+                  {filteredSearch.map(p => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className="w-full text-left px-4 py-3 hover:bg-zinc-50 text-sm border-b border-zinc-100 last:border-0"
+                      onClick={() => {
+                        setSelectedProduct(p);
+                        setArrivalSearchQuery(p.name);
+                      }}
+                    >
+                      <div className="font-bold text-zinc-900">{p.name}</div>
+                      <div className="text-[10px] text-zinc-400">Current Stock: {p.quantity}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Unit Type</label>
-                <select 
-                  className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                  value={newProductForm.unit_type}
-                  onChange={(e) => setNewProductForm({ ...newProductForm, unit_type: e.target.value as any })}
-                >
-                  <option value="unit">Unit (Packet)</option>
-                  <option value="weight">Weight (kg)</option>
-                  <option value="volume">Bottle (Bottle)</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Initial Quantity</label>
-                <input 
-                  type="number" 
-                  className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                  value={newProductForm.quantity || ''}
-                  onChange={(e) => setNewProductForm({ ...newProductForm, quantity: parseFloat(e.target.value) || 0 })}
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Cost Price</label>
-                <input 
-                  type="number" 
-                  className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                  value={newProductForm.cost_price || ''}
-                  onChange={(e) => setNewProductForm({ ...newProductForm, cost_price: parseFloat(e.target.value) || 0 })}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Selling Price</label>
-                <input 
-                  type="number" 
-                  className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                  value={newProductForm.selling_price || ''}
-                  onChange={(e) => setNewProductForm({ ...newProductForm, selling_price: parseFloat(e.target.value) || 0 })}
-                />
-              </div>
-            </div>
-            <button type="submit" className="w-full bg-emerald-600 text-white py-3 rounded-xl font-bold hover:bg-emerald-700 transition-colors">
-              Create & Add Product
-            </button>
-          </form>
-        ) : (
-          <form onSubmit={handleStockArrival} className="space-y-4">
-            <SearchableSelect 
-              items={products}
-              label="Select Product"
-              placeholder="Type to search..."
-              onSelect={(p) => setArrivalForm(prev => ({ ...prev, product_id: p.id }))}
-            />
+
+            {!isExisting && (
+              <motion.div 
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                className="space-y-4 overflow-hidden"
+              >
+                <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-100 mb-4">
+                  <p className="text-xs text-emerald-700 font-medium">✨ This looks like a new product. Please fill in the details below.</p>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Unit Type</label>
+                    <select 
+                      className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                      value={arrivalForm.unit_type}
+                      onChange={(e) => setArrivalForm({ ...arrivalForm, unit_type: e.target.value as any })}
+                    >
+                      <option value="unit">Unit (Packet)</option>
+                      <option value="weight">Weight (kg)</option>
+                      <option value="volume">Bottle (Bottle)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Selling Price</label>
+                    <input 
+                      type="number" 
+                      className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                      value={arrivalForm.selling_price || ''}
+                      onChange={(e) => setArrivalForm({ ...arrivalForm, selling_price: parseFloat(e.target.value) || 0 })}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Min Stock Alert</label>
+                  <input 
+                    type="number" 
+                    className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                    value={arrivalForm.min_stock || ''}
+                    onChange={(e) => setArrivalForm({ ...arrivalForm, min_stock: parseFloat(e.target.value) || 0 })}
+                  />
+                </div>
+              </motion.div>
+            )}
+
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Quantity</label>
@@ -1100,12 +1155,12 @@ export default function App() {
                 />
               </div>
             </div>
-            <button type="submit" className="w-full bg-zinc-900 text-white py-3 rounded-xl font-bold hover:bg-black transition-colors">
-              Update Stock
+
+            <button type="submit" className={`w-full py-3 rounded-xl font-bold transition-colors ${isExisting ? 'bg-zinc-900 text-white hover:bg-black' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}>
+              {isExisting ? 'Update Stock' : 'Create & Add Stock'}
             </button>
           </form>
-        )}
-      </div>
+        </div>
 
       <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-zinc-100 bg-zinc-50/50">
@@ -1153,7 +1208,8 @@ export default function App() {
         </div>
       </div>
     </div>
-  );
+    );
+  };
 
   const renderWithdrawals = () => (
     <div className="space-y-8">
