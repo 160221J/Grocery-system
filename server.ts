@@ -314,6 +314,24 @@ async function startServer() {
     }
   });
 
+  app.get("/api/sales/daily-stats", (req, res) => {
+    try {
+      const dailyStats = db.prepare(`
+        SELECT 
+          date(created_at) as date,
+          SUM(total_amount) as total_sales,
+          SUM(total_profit) as total_profit,
+          (SELECT SUM(amount) FROM withdrawals WHERE date(created_at) = date(s.created_at)) as total_withdrawals
+        FROM sales s
+        GROUP BY date
+        ORDER BY date DESC
+      `).all();
+      res.json(dailyStats);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.post("/api/reset/daily", (req, res) => {
     try {
       const today = new Date().toISOString().split('T')[0];
