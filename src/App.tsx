@@ -227,6 +227,7 @@ export default function App() {
   const [withdrawalPage, setWithdrawalPage] = useState(1);
   const [profitSalesPage, setProfitSalesPage] = useState(1);
   const [profitWithdrawalPage, setProfitWithdrawalPage] = useState(1);
+  const [dailyHistoryPage, setDailyHistoryPage] = useState(1);
   const ITEMS_PER_PAGE = 5;
   
   // Database Lab State
@@ -239,6 +240,7 @@ export default function App() {
   const [saleHistory, setSaleHistory] = useState<any[]>([]);
   const [withdrawalHistory, setWithdrawalHistory] = useState<any[]>([]);
   const [monthlyHistory, setMonthlyHistory] = useState<any[]>([]);
+  const [dailyHistory, setDailyHistory] = useState<any[]>([]);
   const [arrivalHistory, setArrivalHistory] = useState<any[]>([]);
 
   // Stock Arrival State
@@ -267,6 +269,7 @@ export default function App() {
     setWithdrawalPage(1);
     setProfitSalesPage(1);
     setProfitWithdrawalPage(1);
+    setDailyHistoryPage(1);
   }, [activeTab]);
 
   const fetchData = async () => {
@@ -280,14 +283,16 @@ export default function App() {
       setStats(await statsRes.json());
       
       if (activeTab === 'profit') {
-        const [historyRes, withdrawalRes, monthlyRes] = await Promise.all([
+        const [historyRes, withdrawalRes, monthlyRes, dailyRes] = await Promise.all([
           fetch('/api/sales/daily'),
           fetch('/api/withdrawals'),
-          fetch('/api/sales/monthly')
+          fetch('/api/sales/monthly'),
+          fetch('/api/sales/daily-stats')
         ]);
         setSaleHistory(await historyRes.json());
         setWithdrawalHistory(await withdrawalRes.json());
         setMonthlyHistory(await monthlyRes.json());
+        setDailyHistory(await dailyRes.json());
       }
       if (activeTab === 'withdrawals') {
         const historyRes = await fetch('/api/withdrawals');
@@ -1400,6 +1405,51 @@ export default function App() {
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+
+        {/* Daily Performance Table */}
+        <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
+          <div className="p-6 border-b border-zinc-100 bg-zinc-50/50">
+            <h2 className="text-xl font-serif italic text-zinc-900">Daily Performance</h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-zinc-50/50 text-[10px] font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">
+                  <th className="px-6 py-4">Date</th>
+                  <th className="px-6 py-4">Total Sales</th>
+                  <th className="px-6 py-4">Gross Profit</th>
+                  <th className="px-6 py-4">Withdrawals</th>
+                  <th className="px-6 py-4">Net Profit</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {dailyHistory
+                  .slice((dailyHistoryPage - 1) * ITEMS_PER_PAGE, dailyHistoryPage * ITEMS_PER_PAGE)
+                  .map((d, i) => (
+                  <tr key={i} className="hover:bg-zinc-50 transition-colors">
+                    <td className="px-6 py-4">
+                      <div className="text-sm font-bold text-zinc-900">
+                        {new Date(d.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-zinc-600">Rs. {d.total_sales.toLocaleString()}</td>
+                    <td className="px-6 py-4 text-sm font-bold text-emerald-600">Rs. {d.total_profit.toLocaleString()}</td>
+                    <td className="px-6 py-4 text-sm text-red-600">Rs. {(d.total_withdrawals || 0).toLocaleString()}</td>
+                    <td className="px-6 py-4 text-sm font-bold text-zinc-900">Rs. {(d.total_profit - (d.total_withdrawals || 0)).toLocaleString()}</td>
+                  </tr>
+                ))}
+                {dailyHistory.length === 0 && (
+                  <tr><td colSpan={5} className="p-12 text-center text-zinc-400 italic text-sm">No daily data available</td></tr>
+                )}
+              </tbody>
+            </table>
+            <Pagination 
+              current={dailyHistoryPage} 
+              total={dailyHistory.length} 
+              onPageChange={setDailyHistoryPage} 
+            />
           </div>
         </div>
 
