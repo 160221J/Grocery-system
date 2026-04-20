@@ -20,6 +20,7 @@ import {
   Save,
   X,
   ChevronDown,
+  ChevronUp,
   ChevronLeft,
   ChevronRight,
   Database as DatabaseIcon,
@@ -242,6 +243,8 @@ export default function App() {
   const [monthlyHistory, setMonthlyHistory] = useState<any[]>([]);
   const [dailyHistory, setDailyHistory] = useState<any[]>([]);
   const [arrivalHistory, setArrivalHistory] = useState<any[]>([]);
+  const [expandedSales, setExpandedSales] = useState<Record<number, any[]>>({});
+  const [loadingItems, setLoadingItems] = useState<Record<number, boolean>>({});
 
   // Stock Arrival State
   const [arrivalSearchQuery, setArrivalSearchQuery] = useState('');
@@ -270,6 +273,7 @@ export default function App() {
     setProfitSalesPage(1);
     setProfitWithdrawalPage(1);
     setDailyHistoryPage(1);
+    setExpandedSales({});
   }, [activeTab]);
 
   const fetchData = async () => {
@@ -340,6 +344,26 @@ export default function App() {
     } catch (error) {
       console.error('Undo failed:', error);
       alert('Network error while undoing withdrawal');
+    }
+  };
+
+  const toggleSaleExpand = async (saleId: number) => {
+    if (expandedSales[saleId]) {
+      const newExpanded = { ...expandedSales };
+      delete newExpanded[saleId];
+      setExpandedSales(newExpanded);
+      return;
+    }
+
+    setLoadingItems(prev => ({ ...prev, [saleId]: true }));
+    try {
+      const res = await fetch(`/api/sales/${saleId}/items`);
+      const items = await res.json();
+      setExpandedSales(prev => ({ ...prev, [saleId]: items }));
+    } catch (error) {
+      console.error("Error fetching sale items:", error);
+    } finally {
+      setLoadingItems(prev => ({ ...prev, [saleId]: false }));
     }
   };
 
@@ -1471,23 +1495,61 @@ export default function App() {
                   {saleHistory
                     .slice((profitSalesPage - 1) * ITEMS_PER_PAGE, profitSalesPage * ITEMS_PER_PAGE)
                     .map(sale => (
-                      <tr key={sale.id} className="hover:bg-zinc-50 transition-colors group">
-                        <td className="px-6 py-4">
-                          <div className="text-sm font-bold text-zinc-900">#{sale.id.toString().padStart(4, '0')}</div>
-                          <div className="text-[10px] text-zinc-400">{new Date(sale.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
-                        </td>
-                        <td className="px-6 py-4 text-sm font-bold text-emerald-600">Rs. {sale.total_profit.toLocaleString()}</td>
-                        <td className="px-6 py-4 text-right">
-                          <button 
-                            type="button"
-                            onClick={(e) => handleUndoSale(sale.id, e)}
-                            className="p-2 text-zinc-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all relative z-20"
-                            title="Undo Sale"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </td>
-                      </tr>
+                      <React.Fragment key={sale.id}>
+                        <tr 
+                          onClick={() => toggleSaleExpand(sale.id)}
+                          className="hover:bg-zinc-50 transition-colors group cursor-pointer"
+                        >
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-2">
+                              {expandedSales[sale.id] ? <ChevronUp size={14} className="text-zinc-400" /> : <ChevronDown size={14} className="text-zinc-400" />}
+                              <div>
+                                <div className="text-sm font-bold text-zinc-900">#{sale.id.toString().padStart(4, '0')}</div>
+                                <div className="text-[10px] text-zinc-400">{new Date(sale.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 text-sm font-bold text-emerald-600">Rs. {sale.total_profit.toLocaleString()}</td>
+                          <td className="px-6 py-4 text-right">
+                            <button 
+                              type="button"
+                              onClick={(e) => handleUndoSale(sale.id, e)}
+                              className="p-2 text-zinc-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all relative z-20"
+                              title="Undo Sale"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </td>
+                        </tr>
+                        {expandedSales[sale.id] && (
+                          <tr className="bg-zinc-50/30">
+                            <td colSpan={3} className="px-6 py-4">
+                              <div className="space-y-2">
+                                <div className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-2">Sale Items</div>
+                                <div className="grid grid-cols-3 text-[10px] font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100 pb-1">
+                                  <div>Product</div>
+                                  <div>Qty</div>
+                                  <div className="text-right">Profit</div>
+                                </div>
+                                {expandedSales[sale.id].map((item: any) => (
+                                  <div key={item.id} className="grid grid-cols-3 text-xs py-1 border-b border-zinc-50 last:border-0">
+                                    <div className="font-medium text-zinc-700">{item.product_name}</div>
+                                    <div className="text-zinc-500">{item.quantity}</div>
+                                    <div className="text-right text-emerald-600 font-bold">Rs. {item.profit.toLocaleString()}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                        {loadingItems[sale.id] && (
+                          <tr className="bg-zinc-50/30">
+                            <td colSpan={3} className="px-6 py-4 text-center">
+                              <div className="w-4 h-4 border-2 border-zinc-200 border-t-emerald-600 rounded-full animate-spin mx-auto" />
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     ))}
                   {saleHistory.length === 0 && (
                     <tr><td colSpan={3} className="p-12 text-center text-zinc-400 italic text-sm">No sales today</td></tr>
