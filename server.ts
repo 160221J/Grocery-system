@@ -163,6 +163,20 @@ async function startServer() {
     }
   });
 
+  app.get("/api/sales/:id/items", (req, res) => {
+    try {
+      const items = db.prepare(`
+        SELECT si.*, p.name as product_name 
+        FROM sale_items si 
+        JOIN products p ON si.product_id = p.id 
+        WHERE si.sale_id = ?
+      `).all(req.params.id);
+      res.json(items);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get("/api/sales/daily", (req, res) => {
     try {
       const sales = db.prepare(`
