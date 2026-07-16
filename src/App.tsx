@@ -49,6 +49,7 @@ interface SaleItem {
   unit_type: 'unit' | 'weight' | 'volume';
   selected_unit: string;
   manual_total?: number;
+  is_custom?: boolean;
 }
 
 interface DashboardStats {
@@ -519,6 +520,29 @@ export default function App() {
     }
   };
 
+  const addCustomToCart = () => {
+    if (!searchQuery.trim()) return;
+    
+    // Check if item with this name already exists in cart (custom items)
+    const existingIndex = cart.findIndex(item => item.is_custom && item.name.toLowerCase() === searchQuery.toLowerCase());
+    
+    if (existingIndex > -1) {
+      setCart(cart.map((item, idx) => idx === existingIndex ? { ...item, quantity: item.quantity + 1 } : item));
+    } else {
+      const customId = -Date.now(); // Temporary unique ID
+      setCart([...cart, { 
+        product_id: customId, 
+        name: searchQuery, 
+        quantity: 1, 
+        selling_price: 0,
+        unit_type: 'unit',
+        selected_unit: 'unit',
+        is_custom: true
+      }]);
+    }
+    setSearchQuery('');
+  };
+
   const updateCartItem = (productId: number, field: keyof SaleItem, value: any) => {
     setCart(cart.map(item => {
       if (item.product_id === productId) {
@@ -815,8 +839,28 @@ export default function App() {
             className="w-full pl-12 pr-4 py-3 bg-white border border-zinc-200 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && searchQuery.trim()) {
+                const exactMatch = products.find(p => p.name.toLowerCase() === searchQuery.trim().toLowerCase());
+                if (exactMatch) {
+                  addToCart(exactMatch);
+                  setSearchQuery('');
+                } else {
+                  addCustomToCart();
+                }
+              }
+            }}
           />
         </div>
+        {searchQuery.trim() && !products.some(p => p.name.toLowerCase() === searchQuery.trim().toLowerCase()) && (
+          <button 
+            onClick={addCustomToCart}
+            className="w-full py-2 px-4 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-xl text-xs font-bold flex items-center justify-between hover:bg-emerald-100 transition-all"
+          >
+            <span>Add "{searchQuery}" as custom item</span>
+            <PlusCircle size={14} />
+          </button>
+        )}
         <div className="max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             {products
@@ -880,9 +924,18 @@ export default function App() {
                 </div>
                 <div className="flex-[2]">
                   <label className="text-[10px] text-zinc-400 uppercase font-bold truncate">Price</label>
-                  <div className="text-sm font-medium text-zinc-600 py-1">
-                    {item.selling_price}
-                  </div>
+                  {item.is_custom ? (
+                    <input 
+                      type="number" 
+                      value={item.selling_price || ''} 
+                      onChange={(e) => updateCartItem(item.product_id, 'selling_price', e.target.value === '' ? 0 : parseFloat(e.target.value))}
+                      className="w-full bg-white border border-zinc-200 rounded px-1 py-1 text-sm font-medium"
+                    />
+                  ) : (
+                    <div className="text-sm font-medium text-zinc-600 py-1">
+                      {item.selling_price}
+                    </div>
+                  )}
                 </div>
                 <div className="flex-[2.5] text-right">
                   <label className="text-[10px] text-zinc-400 uppercase font-bold block">Total</label>

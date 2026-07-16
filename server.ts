@@ -62,6 +62,13 @@ db.exec(`
   );
 `);
 
+// Migration: Add product_name to sale_items if it doesn't exist
+try {
+  db.prepare("ALTER TABLE sale_items ADD COLUMN product_name TEXT").run();
+} catch (e) {
+  // Column probably already exists or table doesn't exist yet (though it should)
+}
+
 // Seed initial data if empty
 const productCount = db.prepare("SELECT COUNT(*) as count FROM products").get() as { count: number };
 if (productCount.count === 0) {
@@ -139,16 +146,31 @@ async function startServer() {
 
         for (const item of items) {
           const product = db.prepare("SELECT * FROM products WHERE id = ?").get(item.product_id) as any;
-          const profit = (item.selling_price - product.cost_price) * item.quantity;
+          
+          let costPrice = item.selling_price;
+          let profit = 0;
+          let productId = item.product_id;
+
+          if (product) {
+            costPrice = product.cost_price;
+            profit = (item.selling_price - costPrice) * item.quantity;
+          } else {
+            // If product didn't exist in DB (custom item), treat as item with 0 profit
+            // Use null for product_id in sale_items to avoid FK constraint issues if using negative IDs
+            productId = null;
+          }
+
           const amount = item.selling_price * item.quantity;
 
           totalAmount += amount;
           totalProfit += profit;
 
-          db.prepare("INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, cost_price, profit) VALUES (?, ?, ?, ?, ?, ?)")
-            .run(saleId, item.product_id, item.quantity, item.selling_price, product.cost_price, profit);
+          db.prepare("INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, cost_price, profit) VALUES (?, ?, ?, ?, ?, ?, ?)")
+            .run(saleId, productId, item.name, item.quantity, item.selling_price, costPrice, profit);
 
-          db.prepare("UPDATE products SET quantity = quantity - ? WHERE id = ?").run(item.quantity, item.product_id);
+          if (productId) {
+            db.prepare("UPDATE products SET quantity = quantity - ? WHERE id = ?").run(item.quantity, productId);
+          }
         }
 
         db.prepare("UPDATE sales SET total_amount = ?, total_profit = ? WHERE id = ?").run(totalAmount, totalProfit, saleId);
@@ -166,9 +188,9 @@ async function startServer() {
   app.get("/api/sales/:id/items", (req, res) => {
     try {
       const items = db.prepare(`
-        SELECT si.*, p.name as product_name 
+        SELECT si.*, COALESCE(si.product_name, p.name) as product_name 
         FROM sale_items si 
-        JOIN products p ON si.product_id = p.id 
+        LEFT JOIN products p ON si.product_id = p.id 
         WHERE si.sale_id = ?
       `).all(req.params.id);
       res.json(items);
