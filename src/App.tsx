@@ -216,6 +216,36 @@ const SearchableSelect = ({ items, onSelect, placeholder, label }: { items: any[
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'sales' | 'inventory' | 'stock-arrival' | 'withdrawals' | 'profit' | 'database'>('dashboard');
+  
+  // Partner / Easy Login States
+  const [partners, setPartners] = useState<string[]>(() => {
+    const saved = localStorage.getItem('groceryflow_partners');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        // ignore
+      }
+    }
+    return ['System'];
+  });
+  const [activePartner, setActivePartner] = useState<string>(() => {
+    const saved = localStorage.getItem('groceryflow_active_partner');
+    return saved || 'System';
+  });
+  const [isEditingPartners, setIsEditingPartners] = useState(false);
+  const [editingPartnerNames, setEditingPartnerNames] = useState<string[]>(() => partners);
+  const [partnerPeriod, setPartnerPeriod] = useState<'today' | 'month' | 'all'>('today');
+
+  // Header inline management states
+  const [showAddPartnerHeader, setShowAddPartnerHeader] = useState(false);
+  const [newPartnerNameHeader, setNewPartnerNameHeader] = useState('');
+
+  // Keep editing names in sync with partners
+  useEffect(() => {
+    setEditingPartnerNames(partners);
+  }, [partners]);
+
   const [products, setProducts] = useState<Product[]>([]);
   const [stats, setStats] = useState<DashboardStats>({ salesCount: 0, totalSales: 0, totalProfit: 0, lowStockCount: 0 });
   const [cart, setCart] = useState<SaleItem[]>([]);
@@ -276,6 +306,23 @@ export default function App() {
     setDailyHistoryPage(1);
     setExpandedSales({});
   }, [activeTab]);
+
+  const handleSavePartners = (newNames: string[]) => {
+    const filtered = newNames.map(name => name.trim()).filter(name => name.length > 0);
+    if (filtered.length === 0) {
+      alert("Names list cannot be empty");
+      return;
+    }
+    setPartners(filtered);
+    localStorage.setItem('groceryflow_partners', JSON.stringify(filtered));
+    setEditingPartnerNames(filtered);
+    setIsEditingPartners(false);
+    
+    if (!filtered.includes(activePartner)) {
+      setActivePartner(filtered[0]);
+      localStorage.setItem('groceryflow_active_partner', filtered[0]);
+    }
+  };
 
   const fetchData = async () => {
     setLoading(true);
@@ -590,7 +637,7 @@ export default function App() {
       const res = await fetch('/api/sales', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items: itemsToSubmit })
+        body: JSON.stringify({ items: itemsToSubmit, user_name: activePartner })
       });
       if (res.ok) {
         setCart([]);
@@ -1424,6 +1471,146 @@ export default function App() {
   };
 
   const renderProfit = () => {
+    const getPartnerStats = (period: 'today' | 'month' | 'all') => {
+      const now = new Date();
+      const todayStr = now.toDateString();
+      const currentMonthYear = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+      const periodSales = saleHistory.filter(sale => {
+        const saleDate = new Date(sale.created_at);
+        if (period === 'today') {
+          return saleDate.toDateString() === todayStr;
+        } else if (period === 'month') {
+          const saleMonthYear = `${saleDate.getFullYear()}-${String(saleDate.getMonth() + 1).padStart(2, '0')}`;
+          return saleMonthYear === currentMonthYear;
+        }
+        return true; // all-time
+      });
+
+      const periodWithdrawals = withdrawalHistory.filter(w => {
+        const wDate = new Date(w.created_at);
+        if (period === 'today') {
+          return wDate.toDateString() === todayStr;
+        } else if (period === 'month') {
+          const wMonthYear = `${wDate.getFullYear()}-${String(wDate.getMonth() + 1).padStart(2, '0')}`;
+          return wMonthYear === currentMonthYear;
+        }
+        return true; // all-time
+      });
+
+      const totalGrossProfit = periodSales.reduce((sum, s) => sum + s.total_profit, 0);
+      const totalWithdrawals = periodWithdrawals.reduce((sum, w) => sum + w.amount, 0);
+      const totalNetProfit = totalGrossProfit - totalWithdrawals;
+
+      // Extract all unique user names from periodSales who actually completed sales
+      const salesUsers = Array.from(new Set<string>(periodSales.map((s: any) => (s.user_name || 'System') as string)));
+      
+      // Combine active partners and any other historical users with sales in this period
+      const allPeriodPartners = [...partners];
+      salesUsers.forEach(u => {
+        if (!allPeriodPartners.some(p => p.toLowerCase().trim() === u.toLowerCase().trim())) {
+          allPeriodPartners.push(u);
+        }
+      });
+
+      const partnerShares = allPeriodPartners.map(partner => {
+        const isActive = partners.some(p => p.toLowerCase().trim() === partner.toLowerCase().trim());
+        const partnerSales = periodSales.filter(s => {
+          const sUser = s.user_name || 'System';
+          return sUser.toLowerCase().trim() === partner.toLowerCase().trim();
+        });
+        const partnerGrossProfit = partnerSales.reduce((sum, s) => sum + s.total_profit, 0);
+        const ratio = totalGrossProfit > 0 ? (partnerGrossProfit / totalGrossProfit) : 0;
+        const netShare = totalNetProfit * ratio;
+
+        return {
+          name: partner,
+          grossProfit: partnerGrossProfit,
+          ratio,
+          netShare,
+          isActive
+        };
+      });
+
+      return {
+        totalGrossProfit,
+        totalWithdrawals,
+        totalNetProfit,
+        partnerShares
+      };
+    };
+
+    const pStats = getPartnerStats(partnerPeriod);
+
+    const renderPartnerEditForm = () => (
+      <div className="p-6 bg-zinc-50 border-t border-zinc-100 space-y-4">
+        <div className="flex justify-between items-center">
+          <div>
+            <h4 className="text-sm font-bold text-zinc-700">Manage Partners</h4>
+            <p className="text-xs text-zinc-500 mt-0.5">Rename, add or remove partners. Deleting a partner keeps their past sale records intact.</p>
+          </div>
+          <button
+            onClick={() => {
+              setEditingPartnerNames([...editingPartnerNames, `Partner ${editingPartnerNames.length + 1}`]);
+            }}
+            className="px-3 py-1.5 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-lg text-xs font-bold hover:bg-emerald-100 transition-all flex items-center gap-1.5"
+          >
+            <PlusCircle size={14} /> Add Partner
+          </button>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+          {editingPartnerNames.map((name, index) => (
+            <div key={index} className="flex items-end gap-2 bg-white p-3 rounded-xl border border-zinc-200 shadow-sm relative group">
+              <div className="flex-1 space-y-1">
+                <label className="text-[10px] text-zinc-400 font-bold uppercase block">Partner {index + 1}</label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => {
+                    const updated = [...editingPartnerNames];
+                    updated[index] = e.target.value;
+                    setEditingPartnerNames(updated);
+                  }}
+                  className="w-full p-2 bg-zinc-50/50 border border-zinc-100 rounded-lg text-sm font-bold focus:ring-2 focus:ring-emerald-500/20 focus:outline-none focus:bg-white"
+                  placeholder="Enter partner name"
+                />
+              </div>
+              {editingPartnerNames.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const updated = editingPartnerNames.filter((_, idx) => idx !== index);
+                    setEditingPartnerNames(updated);
+                  }}
+                  className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors shrink-0 mb-0.5"
+                  title="Remove Partner"
+                >
+                  <Trash2 size={16} />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="flex gap-2 justify-end pt-2 border-t border-zinc-100">
+          <button
+            onClick={() => {
+              setEditingPartnerNames(partners);
+              setIsEditingPartners(false);
+            }}
+            className="px-4 py-2 border border-zinc-200 text-zinc-500 text-xs font-bold rounded-xl hover:bg-zinc-100 transition-all"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => handleSavePartners(editingPartnerNames)}
+            className="px-4 py-2 bg-zinc-900 text-white text-xs font-bold rounded-xl hover:bg-black transition-all"
+          >
+            Save Partners
+          </button>
+        </div>
+      </div>
+    );
+
     return (
       <div className="space-y-8 pb-20">
         <div className="flex justify-between items-center">
@@ -1444,6 +1631,89 @@ export default function App() {
             >
               <History size={14} /> Reset Month
             </button>
+          </div>
+        </div>
+
+        {/* Partner Profit Split Widget */}
+        <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
+          <div className="p-6 border-b border-zinc-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-zinc-50/50">
+            <div>
+              <h2 className="text-xl font-serif italic text-zinc-900">Partner Profit Share Summary</h2>
+              <p className="text-xs text-zinc-500 mt-1">Net profits are split proportionally based on each partner's gross sales profit contribution.</p>
+            </div>
+            <div className="flex gap-2 self-stretch sm:self-auto">
+              <div className="bg-zinc-100 p-1 rounded-xl flex gap-1 text-xs font-bold w-full sm:w-auto">
+                {(['today', 'month', 'all'] as const).map((p) => (
+                  <button
+                    key={p}
+                    onClick={() => setPartnerPeriod(p)}
+                    className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg transition-all capitalize ${partnerPeriod === p ? 'bg-white text-zinc-800 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}
+                  >
+                    {p === 'all' ? 'All-Time' : p === 'month' ? 'This Month' : 'Today'}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => {
+                  setEditingPartnerNames(partners);
+                  setIsEditingPartners(!isEditingPartners);
+                }}
+                className="px-3 py-1.5 border border-zinc-200 text-zinc-600 rounded-xl text-xs font-bold hover:bg-zinc-100 transition-all flex items-center gap-1 shrink-0"
+              >
+                <Edit2 size={14} /> Manage Partners
+              </button>
+            </div>
+          </div>
+
+          {isEditingPartners && renderPartnerEditForm()}
+
+          <div className="p-6 bg-zinc-50/20 grid grid-cols-1 md:grid-cols-3 gap-4 border-b border-zinc-100">
+            <div className="p-4 bg-white border border-zinc-100 rounded-xl shadow-sm">
+              <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest block">Total Gross Profit</span>
+              <span className="text-2xl font-serif font-bold text-emerald-600 block mt-1">Rs. {pStats.totalGrossProfit.toLocaleString()}</span>
+            </div>
+            <div className="p-4 bg-white border border-zinc-100 rounded-xl shadow-sm">
+              <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest block">Total Withdrawals</span>
+              <span className="text-2xl font-serif font-bold text-red-600 block mt-1">Rs. {pStats.totalWithdrawals.toLocaleString()}</span>
+            </div>
+            <div className="p-4 bg-white border border-zinc-100 rounded-xl shadow-sm">
+              <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest block">Total Net Profit</span>
+              <span className="text-2xl font-serif font-bold text-zinc-900 block mt-1">Rs. {pStats.totalNetProfit.toLocaleString()}</span>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-zinc-50/50 text-[10px] font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">
+                  <th className="px-6 py-4">Partner Name</th>
+                  <th className="px-6 py-4">Sales Gross Profit</th>
+                  <th className="px-6 py-4">Sales Ratio</th>
+                  <th className="px-6 py-4 text-right">Net Profit Share</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {pStats.partnerShares.map((share, idx) => (
+                  <tr key={idx} className="hover:bg-zinc-50 transition-colors">
+                    <td className="px-6 py-4">
+                      <div className="text-sm font-bold text-zinc-800 flex items-center gap-2">
+                        <div className={`w-2.5 h-2.5 rounded-full ${share.isActive ? 'bg-emerald-500' : 'bg-zinc-300'}`} />
+                        {share.name}
+                        {activePartner === share.name && (
+                          <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded-full uppercase font-bold tracking-wider">Active</span>
+                        )}
+                        {!share.isActive && (
+                          <span className="text-[9px] bg-zinc-100 text-zinc-500 px-1.5 py-0.5 rounded-full uppercase font-bold tracking-wider">Historical</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-zinc-600 font-medium">Rs. {share.grossProfit.toLocaleString()}</td>
+                    <td className="px-6 py-4 text-sm text-zinc-500">{(share.ratio * 100).toFixed(1)}%</td>
+                    <td className="px-6 py-4 text-sm font-bold text-emerald-700 text-right">Rs. {Math.round(share.netShare).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
 
@@ -1558,7 +1828,11 @@ export default function App() {
                               {expandedSales[sale.id] ? <ChevronUp size={14} className="text-zinc-400" /> : <ChevronDown size={14} className="text-zinc-400" />}
                               <div>
                                 <div className="text-sm font-bold text-zinc-900">#{sale.id.toString().padStart(4, '0')}</div>
-                                <div className="text-[10px] text-zinc-400">{new Date(sale.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                                <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                                  <span className="text-[10px] text-zinc-400">{new Date(sale.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                  <span className="text-[10px] text-zinc-300">•</span>
+                                  <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">{sale.user_name || 'System'}</span>
+                                </div>
                               </div>
                             </div>
                           </td>
@@ -1703,9 +1977,113 @@ export default function App() {
         <header className="h-16 bg-white border-b border-zinc-200 px-8 flex items-center justify-between sticky top-0 z-10">
           <h1 className="text-sm font-bold text-zinc-400 uppercase tracking-widest italic">{activeTab.replace('-', ' ')}</h1>
           <div className="flex items-center gap-4">
-            <div className="text-right">
-              <div className="text-xs font-bold text-zinc-900">Admin User</div>
-              <div className="text-[10px] text-zinc-400">Grocery Shop Manager</div>
+            <div className="flex items-center gap-2">
+              {showAddPartnerHeader ? (
+                <div className="flex items-center gap-1.5 bg-zinc-50 border border-zinc-200 rounded-xl px-2.5 py-1 shadow-sm">
+                  <input
+                    type="text"
+                    value={newPartnerNameHeader}
+                    onChange={(e) => setNewPartnerNameHeader(e.target.value)}
+                    placeholder="New partner name..."
+                    className="bg-transparent border-none text-xs font-bold focus:outline-none focus:ring-0 w-32 p-0 text-zinc-800 placeholder-zinc-400"
+                    autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        const trimmed = newPartnerNameHeader.trim();
+                        if (trimmed) {
+                          if (partners.map(p => p.toLowerCase()).includes(trimmed.toLowerCase())) {
+                            alert("This partner already exists");
+                            return;
+                          }
+                          const updated = [...partners, trimmed];
+                          setPartners(updated);
+                          localStorage.setItem('groceryflow_partners', JSON.stringify(updated));
+                          setActivePartner(trimmed);
+                          localStorage.setItem('groceryflow_active_partner', trimmed);
+                          setNewPartnerNameHeader('');
+                          setShowAddPartnerHeader(false);
+                        }
+                      } else if (e.key === 'Escape') {
+                        setShowAddPartnerHeader(false);
+                      }
+                    }}
+                  />
+                  <button
+                    onClick={() => {
+                      const trimmed = newPartnerNameHeader.trim();
+                      if (trimmed) {
+                        if (partners.map(p => p.toLowerCase()).includes(trimmed.toLowerCase())) {
+                          alert("This partner already exists");
+                          return;
+                        }
+                        const updated = [...partners, trimmed];
+                        setPartners(updated);
+                        localStorage.setItem('groceryflow_partners', JSON.stringify(updated));
+                        setActivePartner(trimmed);
+                        localStorage.setItem('groceryflow_active_partner', trimmed);
+                        setNewPartnerNameHeader('');
+                        setShowAddPartnerHeader(false);
+                      }
+                    }}
+                    className="text-emerald-600 hover:text-emerald-700 font-bold text-xs px-1"
+                  >
+                    Add
+                  </button>
+                  <button
+                    onClick={() => setShowAddPartnerHeader(false)}
+                    className="text-zinc-400 hover:text-zinc-600"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest hidden sm:inline">Active User</span>
+                  <div className="flex items-center gap-1.5">
+                    <select
+                      value={activePartner}
+                      onChange={(e) => {
+                        setActivePartner(e.target.value);
+                        localStorage.setItem('groceryflow_active_partner', e.target.value);
+                      }}
+                      className="bg-zinc-50 border border-zinc-200 text-xs font-bold text-zinc-800 rounded-xl px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-sm cursor-pointer hover:bg-zinc-100 transition-colors"
+                    >
+                      {partners.map(p => (
+                        <option key={p} value={p}>{p}</option>
+                      ))}
+                    </select>
+                    
+                    <button
+                      onClick={() => {
+                        setNewPartnerNameHeader('');
+                        setShowAddPartnerHeader(true);
+                      }}
+                      className="p-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-100 text-emerald-700 rounded-xl transition-all shadow-sm"
+                      title="Add New Partner"
+                    >
+                      <PlusCircle size={14} />
+                    </button>
+
+                    {partners.length > 1 && (
+                      <button
+                        onClick={() => {
+                          if (confirm(`Are you sure you want to remove "${activePartner}"? Past sale records will remain safe.`)) {
+                            const updated = partners.filter(p => p !== activePartner);
+                            setPartners(updated);
+                            localStorage.setItem('groceryflow_partners', JSON.stringify(updated));
+                            setActivePartner(updated[0]);
+                            localStorage.setItem('groceryflow_active_partner', updated[0]);
+                          }
+                        }}
+                        className="p-1.5 bg-red-50 hover:bg-red-100 border border-red-100 text-red-600 rounded-xl transition-all shadow-sm"
+                        title="Remove Current Partner"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </header>
