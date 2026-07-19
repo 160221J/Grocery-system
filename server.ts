@@ -69,13 +69,6 @@ try {
   // Column probably already exists or table doesn't exist yet (though it should)
 }
 
-// Migration: Add user_name to sales table if it doesn't exist
-try {
-  db.prepare("ALTER TABLE sales ADD COLUMN user_name TEXT").run();
-} catch (e) {
-  // Column probably already exists
-}
-
 // Seed initial data if empty
 const productCount = db.prepare("SELECT COUNT(*) as count FROM products").get() as { count: number };
 if (productCount.count === 0) {
@@ -143,13 +136,12 @@ async function startServer() {
 
   app.post("/api/sales", (req, res) => {
     try {
-      const { items, user_name } = req.body;
+      const { items } = req.body;
       let totalAmount = 0;
       let totalProfit = 0;
 
       const transaction = db.transaction(() => {
-        const saleInfo = db.prepare("INSERT INTO sales (total_amount, total_profit, user_name) VALUES (0, 0, ?)")
-          .run(user_name || 'System');
+        const saleInfo = db.prepare("INSERT INTO sales (total_amount, total_profit) VALUES (0, 0)").run();
         const saleId = saleInfo.lastInsertRowid;
 
         for (const item of items) {
@@ -210,8 +202,7 @@ async function startServer() {
   app.get("/api/sales/daily", (req, res) => {
     try {
       const sales = db.prepare(`
-        SELECT s.id, s.total_amount, s.total_profit, s.created_at, COALESCE(s.user_name, 'System') as user_name, 
-               (SELECT COUNT(*) FROM sale_items WHERE sale_id = s.id) as item_count 
+        SELECT s.*, (SELECT COUNT(*) FROM sale_items WHERE sale_id = s.id) as item_count 
         FROM sales s 
         ORDER BY created_at DESC
       `).all();
