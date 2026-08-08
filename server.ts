@@ -60,6 +60,12 @@ db.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (product_id) REFERENCES products(id)
   );
+
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 // Migration: Add product_name to sale_items if it doesn't exist
@@ -76,7 +82,7 @@ try {
   // Column probably already exists
 }
 
-// Seed initial data if empty
+// Seed initial products if empty
 const productCount = db.prepare("SELECT COUNT(*) as count FROM products").get() as { count: number };
 if (productCount.count === 0) {
   const insert = db.prepare("INSERT INTO products (name, unit_type, cost_price, selling_price, quantity, min_stock) VALUES (?, ?, ?, ?, ?, ?)");
@@ -84,6 +90,22 @@ if (productCount.count === 0) {
   insert.run("Sugar", "weight", 150, 180, 100, 20);
   insert.run("Coconut Oil", "volume", 450, 550, 20, 5);
   insert.run("Milk Powder 400g", "unit", 950, 1050, 15, 5);
+}
+
+// Seed initial users if empty
+const userCount = db.prepare("SELECT COUNT(*) as count FROM users").get() as { count: number };
+if (userCount.count === 0) {
+  const insertUser = db.prepare("INSERT OR IGNORE INTO users (name) VALUES (?)");
+  const existingSalesUsers = db.prepare("SELECT DISTINCT user_name FROM sales WHERE user_name IS NOT NULL AND TRIM(user_name) != ''").all() as { user_name: string }[];
+  const initialNames = new Set<string>(['System', 'Partner A', 'Partner B']);
+  existingSalesUsers.forEach(u => initialNames.add(u.user_name));
+  initialNames.forEach(name => {
+    try {
+      insertUser.run(name);
+    } catch (e) {
+      // Ignore duplicates
+    }
+  });
 }
 
 async function startServer() {
@@ -106,6 +128,75 @@ async function startServer() {
       });
     } catch (error) {
       console.error("Dashboard error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/users", (req, res) => {
+    try {
+      const users = db.prepare("SELECT * FROM users ORDER BY id ASC").all();
+      res.json(users);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/users", (req, res) => {
+    try {
+      const { name } = req.body;
+      if (!name || !name.trim()) {
+        return res.status(400).json({ error: "User name is required" });
+      }
+      const trimmed = name.trim();
+      const info = db.prepare("INSERT INTO users (name) VALUES (?)").run(trimmed);
+      res.json({ id: info.lastInsertRowid, name: trimmed });
+    } catch (error) {
+      if (error.message && error.message.includes("UNIQUE")) {
+        return res.status(400).json({ error: "A user with this name already exists" });
+      }
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/users/sync", (req, res) => {
+    try {
+      const { names } = req.body;
+      if (!Array.isArray(names) || names.length === 0) {
+        return res.status(400).json({ error: "Names array is required" });
+      }
+      const syncTransaction = db.transaction(() => {
+        const placeholders = names.map(() => '?').join(',');
+        db.prepare(`DELETE FROM users WHERE name NOT IN (${placeholders})`).run(...names);
+        
+        const insertStmt = db.prepare("INSERT OR IGNORE INTO users (name) VALUES (?)");
+        for (const name of names) {
+          if (name && name.trim()) {
+            insertStmt.run(name.trim());
+          }
+        }
+      });
+      syncTransaction();
+      const updatedUsers = db.prepare("SELECT * FROM users ORDER BY id ASC").all();
+      res.json(updatedUsers);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/users/:id", (req, res) => {
+    try {
+      db.prepare("DELETE FROM users WHERE id = ?").run(req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/users/name/:name", (req, res) => {
+    try {
+      db.prepare("DELETE FROM users WHERE name = ?").run(req.params.name);
+      res.json({ success: true });
+    } catch (error) {
       res.status(500).json({ error: error.message });
     }
   });
@@ -465,7 +556,7 @@ async function startServer() {
         template = await vite.transformIndexHtml(url, template);
         res.status(200).set({ "Content-Type": "text/html" }).end(template);
       } catch (e) {
-        vite.ssrFixStacktrace(e);
+        vite.ssrFixStacktrace(e as Error);
         next(e);
       }
     });

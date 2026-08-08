@@ -307,32 +307,116 @@ export default function App() {
     setExpandedSales({});
   }, [activeTab]);
 
-  const handleSavePartners = (newNames: string[]) => {
+  const handleSavePartners = async (newNames: string[]) => {
     const filtered = newNames.map(name => name.trim()).filter(name => name.length > 0);
     if (filtered.length === 0) {
       alert("Names list cannot be empty");
       return;
     }
-    setPartners(filtered);
-    localStorage.setItem('groceryflow_partners', JSON.stringify(filtered));
-    setEditingPartnerNames(filtered);
-    setIsEditingPartners(false);
-    
-    if (!filtered.includes(activePartner)) {
-      setActivePartner(filtered[0]);
-      localStorage.setItem('groceryflow_active_partner', filtered[0]);
+    try {
+      const res = await fetch('/api/users/sync', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ names: filtered })
+      });
+      if (res.ok) {
+        const updatedUsers: { id: number; name: string }[] = await res.json();
+        const updatedNames = updatedUsers.map(u => u.name);
+        setPartners(updatedNames);
+        setEditingPartnerNames(updatedNames);
+        setIsEditingPartners(false);
+        
+        if (!updatedNames.includes(activePartner)) {
+          setActivePartner(updatedNames[0]);
+          localStorage.setItem('groceryflow_active_partner', updatedNames[0]);
+        }
+      } else {
+        const err = await res.json();
+        alert(`Failed to save partners: ${err.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Failed to save partners:', error);
+      alert('Network error while saving partners');
+    }
+  };
+
+  const handleAddPartnerHeader = async () => {
+    const trimmed = newPartnerNameHeader.trim();
+    if (!trimmed) return;
+    if (partners.map(p => p.toLowerCase()).includes(trimmed.toLowerCase())) {
+      alert("This user already exists");
+      return;
+    }
+    try {
+      const res = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed })
+      });
+      if (res.ok) {
+        const newUser = await res.json();
+        const updated = [...partners, newUser.name];
+        setPartners(updated);
+        setActivePartner(newUser.name);
+        localStorage.setItem('groceryflow_active_partner', newUser.name);
+        setNewPartnerNameHeader('');
+        setShowAddPartnerHeader(false);
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Failed to add user');
+      }
+    } catch (error) {
+      console.error('Error adding user:', error);
+      alert('Network error while adding user');
+    }
+  };
+
+  const handleRemoveActivePartnerHeader = async () => {
+    if (confirm(`Are you sure you want to remove "${activePartner}"? Past sale records will remain safe.`)) {
+      try {
+        const res = await fetch(`/api/users/name/${encodeURIComponent(activePartner)}`, {
+          method: 'DELETE'
+        });
+        if (res.ok) {
+          const updated = partners.filter(p => p !== activePartner);
+          setPartners(updated);
+          if (updated.length > 0) {
+            setActivePartner(updated[0]);
+            localStorage.setItem('groceryflow_active_partner', updated[0]);
+          }
+        } else {
+          const err = await res.json();
+          alert(err.error || 'Failed to remove user');
+        }
+      } catch (error) {
+        console.error('Error removing user:', error);
+        alert('Network error while removing user');
+      }
     }
   };
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [prodRes, statsRes] = await Promise.all([
+      const [prodRes, statsRes, usersRes] = await Promise.all([
         fetch('/api/products'),
-        fetch('/api/dashboard')
+        fetch('/api/dashboard'),
+        fetch('/api/users')
       ]);
       setProducts(await prodRes.json());
       setStats(await statsRes.json());
+
+      if (usersRes.ok) {
+        const usersData: { id: number; name: string }[] = await usersRes.json();
+        if (usersData && usersData.length > 0) {
+          const userNames = usersData.map(u => u.name);
+          setPartners(userNames);
+          if (!userNames.includes(activePartner)) {
+            setActivePartner(userNames[0]);
+            localStorage.setItem('groceryflow_active_partner', userNames[0]);
+          }
+        }
+      }
       
       if (activeTab === 'profit') {
         const [historyRes, withdrawalRes, monthlyRes, dailyRes] = await Promise.all([
@@ -760,6 +844,12 @@ export default function App() {
                 className="text-[10px] bg-zinc-100 px-2 py-1 rounded hover:bg-zinc-200 font-bold uppercase"
               >
                 Withdrawals
+              </button>
+              <button 
+                onClick={() => setSqlQuery('SELECT * FROM users;')}
+                className="text-[10px] bg-zinc-100 px-2 py-1 rounded hover:bg-zinc-200 font-bold uppercase"
+              >
+                Users
               </button>
             </div>
             <button 
@@ -1989,42 +2079,14 @@ export default function App() {
                     autoFocus
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
-                        const trimmed = newPartnerNameHeader.trim();
-                        if (trimmed) {
-                          if (partners.map(p => p.toLowerCase()).includes(trimmed.toLowerCase())) {
-                            alert("This partner already exists");
-                            return;
-                          }
-                          const updated = [...partners, trimmed];
-                          setPartners(updated);
-                          localStorage.setItem('groceryflow_partners', JSON.stringify(updated));
-                          setActivePartner(trimmed);
-                          localStorage.setItem('groceryflow_active_partner', trimmed);
-                          setNewPartnerNameHeader('');
-                          setShowAddPartnerHeader(false);
-                        }
+                        handleAddPartnerHeader();
                       } else if (e.key === 'Escape') {
                         setShowAddPartnerHeader(false);
                       }
                     }}
                   />
                   <button
-                    onClick={() => {
-                      const trimmed = newPartnerNameHeader.trim();
-                      if (trimmed) {
-                        if (partners.map(p => p.toLowerCase()).includes(trimmed.toLowerCase())) {
-                          alert("This partner already exists");
-                          return;
-                        }
-                        const updated = [...partners, trimmed];
-                        setPartners(updated);
-                        localStorage.setItem('groceryflow_partners', JSON.stringify(updated));
-                        setActivePartner(trimmed);
-                        localStorage.setItem('groceryflow_active_partner', trimmed);
-                        setNewPartnerNameHeader('');
-                        setShowAddPartnerHeader(false);
-                      }
-                    }}
+                    onClick={handleAddPartnerHeader}
                     className="text-emerald-600 hover:text-emerald-700 font-bold text-xs px-1"
                   >
                     Add
@@ -2066,15 +2128,7 @@ export default function App() {
 
                     {partners.length > 1 && (
                       <button
-                        onClick={() => {
-                          if (confirm(`Are you sure you want to remove "${activePartner}"? Past sale records will remain safe.`)) {
-                            const updated = partners.filter(p => p !== activePartner);
-                            setPartners(updated);
-                            localStorage.setItem('groceryflow_partners', JSON.stringify(updated));
-                            setActivePartner(updated[0]);
-                            localStorage.setItem('groceryflow_active_partner', updated[0]);
-                          }
-                        }}
+                        onClick={handleRemoveActivePartnerHeader}
                         className="p-1.5 bg-red-50 hover:bg-red-100 border border-red-100 text-red-600 rounded-xl transition-all shadow-sm"
                         title="Remove Current Partner"
                       >
