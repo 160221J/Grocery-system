@@ -66,6 +66,14 @@ db.exec(`
     name TEXT NOT NULL UNIQUE,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS daily_summaries (
+    date TEXT PRIMARY KEY,
+    total_sales REAL DEFAULT 0,
+    total_profit REAL DEFAULT 0,
+    total_withdrawals REAL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 // Migration: Add product_name to sale_items if it doesn't exist
@@ -108,9 +116,111 @@ if (userCount.count === 0) {
   });
 }
 
+// Automated Database Retention & Cleanup Job
+// - Inventory (products) and users: Kept FOREVER
+// - Summary data (daily_summaries): Kept up to 12 months (365 days)
+// - Granular transactions (sales, sale_items, withdrawals, stock_arrivals): Kept for 7 days
+function runDatabaseCleanup() {
+  try {
+    console.log("[Cleanup] Starting daily database retention cleanup...");
+
+    const cleanupTransaction = db.transaction(() => {
+      // 1. Identify dates older than 7 days with sales or withdrawals
+      const oldSaleDates = db.prepare(`
+        SELECT DISTINCT date(created_at) as date 
+        FROM sales 
+        WHERE date(created_at) < date('now', '-7 days')
+      `).all() as { date: string }[];
+
+      const oldWithdrawalDates = db.prepare(`
+        SELECT DISTINCT date(created_at) as date 
+        FROM withdrawals 
+        WHERE date(created_at) < date('now', '-7 days')
+      `).all() as { date: string }[];
+
+      const allOldDates = Array.from(new Set([
+        ...oldSaleDates.map(d => d.date),
+        ...oldWithdrawalDates.map(d => d.date)
+      ])).filter(Boolean);
+
+      // 2. Save daily totals into daily_summaries BEFORE deleting raw transaction records
+      const upsertSummary = db.prepare(`
+        INSERT INTO daily_summaries (date, total_sales, total_profit, total_withdrawals)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(date) DO UPDATE SET
+          total_sales = excluded.total_sales,
+          total_profit = excluded.total_profit,
+          total_withdrawals = excluded.total_withdrawals
+      `);
+
+      for (const d of allOldDates) {
+        const salesAgg = db.prepare(`
+          SELECT COALESCE(SUM(total_amount), 0) as sales, COALESCE(SUM(total_profit), 0) as profit
+          FROM sales
+          WHERE date(created_at) = ?
+        `).get(d) as { sales: number; profit: number };
+
+        const withdrawalAgg = db.prepare(`
+          SELECT COALESCE(SUM(amount), 0) as withdrawals
+          FROM withdrawals
+          WHERE date(created_at) = ?
+        `).get(d) as { withdrawals: number };
+
+        upsertSummary.run(
+          d,
+          salesAgg.sales || 0,
+          salesAgg.profit || 0,
+          withdrawalAgg.withdrawals || 0
+        );
+      }
+
+      // 3. Purge granular records older than 7 days
+      db.prepare(`
+        DELETE FROM sale_items 
+        WHERE sale_id IN (
+          SELECT id FROM sales WHERE date(created_at) < date('now', '-7 days')
+        )
+      `).run();
+
+      const deletedSales = db.prepare(`
+        DELETE FROM sales WHERE date(created_at) < date('now', '-7 days')
+      `).run();
+
+      const deletedWithdrawals = db.prepare(`
+        DELETE FROM withdrawals WHERE date(created_at) < date('now', '-7 days')
+      `).run();
+
+      const deletedArrivals = db.prepare(`
+        DELETE FROM stock_arrivals WHERE date(created_at) < date('now', '-7 days')
+      `).run();
+
+      // 4. Purge daily summaries older than 12 months (365 days)
+      const deletedSummaries = db.prepare(`
+        DELETE FROM daily_summaries WHERE date < date('now', '-365 days')
+      `).run();
+
+      console.log(`[Cleanup] Daily summaries saved for ${allOldDates.length} days. Deleted ${deletedSales.changes} old sales, ${deletedWithdrawals.changes} old withdrawals, ${deletedArrivals.changes} old stock arrivals, ${deletedSummaries.changes} summaries > 12 months.`);
+    });
+
+    cleanupTransaction();
+
+    // 5. Reclaim SQLite disk space
+    db.exec("VACUUM;");
+    console.log("[Cleanup] Database VACUUM completed successfully.");
+  } catch (error) {
+    console.error("[Cleanup] Database cleanup error:", error);
+  }
+}
+
 async function startServer() {
   const app = express();
   app.use(express.json());
+
+  // Run cleanup on server startup and schedule daily (once every 24 hours)
+  runDatabaseCleanup();
+  setInterval(() => {
+    runDatabaseCleanup();
+  }, 24 * 60 * 60 * 1000);
 
   // API Routes
   app.get("/api/dashboard", (req, res) => {
@@ -436,11 +546,31 @@ async function startServer() {
     try {
       const monthlyStats = db.prepare(`
         SELECT 
-          strftime('%Y-%m', created_at) as month,
-          SUM(total_amount) as total_sales,
+          month,
+          SUM(total_sales) as total_sales,
           SUM(total_profit) as total_profit,
-          (SELECT SUM(amount) FROM withdrawals WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', s.created_at)) as total_withdrawals
-        FROM sales s
+          SUM(total_withdrawals) as total_withdrawals
+        FROM (
+          SELECT 
+            strftime('%Y-%m', created_at) as month,
+            SUM(total_amount) as total_sales,
+            SUM(total_profit) as total_profit,
+            (SELECT COALESCE(SUM(amount), 0) FROM withdrawals WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', s.created_at)) as total_withdrawals
+          FROM sales s
+          WHERE date(created_at) >= date('now', '-7 days')
+          GROUP BY month
+
+          UNION ALL
+
+          SELECT 
+            strftime('%Y-%m', date) as month,
+            SUM(total_sales) as total_sales,
+            SUM(total_profit) as total_profit,
+            SUM(total_withdrawals) as total_withdrawals
+          FROM daily_summaries
+          WHERE date < date('now', '-7 days') AND date >= date('now', '-365 days')
+          GROUP BY month
+        ) Combined
         GROUP BY month
         ORDER BY month DESC
       `).all();
@@ -453,16 +583,62 @@ async function startServer() {
   app.get("/api/sales/daily-stats", (req, res) => {
     try {
       const dailyStats = db.prepare(`
-        SELECT 
-          date(created_at) as date,
-          SUM(total_amount) as total_sales,
-          SUM(total_profit) as total_profit,
-          (SELECT SUM(amount) FROM withdrawals WHERE date(created_at) = date(s.created_at)) as total_withdrawals
-        FROM sales s
-        GROUP BY date
+        WITH RecentDates AS (
+          SELECT DISTINCT date(created_at) as date FROM sales WHERE date(created_at) >= date('now', '-7 days')
+          UNION
+          SELECT DISTINCT date(created_at) as date FROM withdrawals WHERE date(created_at) >= date('now', '-7 days')
+        ),
+        RecentStats AS (
+          SELECT 
+            rd.date as date,
+            COALESCE((SELECT SUM(total_amount) FROM sales WHERE date(created_at) = rd.date), 0) as total_sales,
+            COALESCE((SELECT SUM(total_profit) FROM sales WHERE date(created_at) = rd.date), 0) as total_profit,
+            COALESCE((SELECT SUM(amount) FROM withdrawals WHERE date(created_at) = rd.date), 0) as total_withdrawals
+          FROM RecentDates rd
+        )
+        SELECT date, total_sales, total_profit, total_withdrawals FROM RecentStats
+        UNION ALL
+        SELECT date, total_sales, total_profit, total_withdrawals
+        FROM daily_summaries
+        WHERE date < date('now', '-7 days') AND date >= date('now', '-365 days')
         ORDER BY date DESC
       `).all();
       res.json(dailyStats);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/admin/cleanup", (req, res) => {
+    try {
+      runDatabaseCleanup();
+      res.json({ success: true, message: "Database cleanup completed successfully" });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/admin/cleanup-status", (req, res) => {
+    try {
+      const summaryCount = db.prepare("SELECT COUNT(*) as count FROM daily_summaries").get() as { count: number };
+      const salesCount = db.prepare("SELECT COUNT(*) as count FROM sales").get() as { count: number };
+      const withdrawalsCount = db.prepare("SELECT COUNT(*) as count FROM withdrawals").get() as { count: number };
+      const oldestSale = db.prepare("SELECT MIN(created_at) as oldest FROM sales").get() as { oldest: string };
+      const oldestSummary = db.prepare("SELECT MIN(date) as oldest FROM daily_summaries").get() as { oldest: string };
+      
+      res.json({
+        summaryRecordsCount: summaryCount.count,
+        activeSalesCount: salesCount.count,
+        activeWithdrawalsCount: withdrawalsCount.count,
+        oldestActiveSale: oldestSale.oldest || 'None',
+        oldestSummaryDate: oldestSummary.oldest || 'None',
+        retentionPolicy: {
+          inventory: "Kept Forever",
+          rawTransactions: "7 Days",
+          summaryData: "12 Months (365 Days)",
+          schedule: "Automated Daily"
+        }
+      });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
