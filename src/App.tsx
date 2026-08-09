@@ -26,7 +26,8 @@ import {
   Database as DatabaseIcon,
   Terminal,
   Menu,
-  MoreHorizontal
+  MoreHorizontal,
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -851,6 +852,12 @@ export default function App() {
               >
                 Users
               </button>
+              <button 
+                onClick={() => setSqlQuery('SELECT * FROM daily_summaries;')}
+                className="text-[10px] bg-zinc-100 px-2 py-1 rounded hover:bg-zinc-200 font-bold uppercase text-emerald-700"
+              >
+                Summaries
+              </button>
             </div>
             <button 
               onClick={handleRunQuery}
@@ -859,6 +866,54 @@ export default function App() {
             >
               {isExecuting ? 'Running...' : 'Execute Query'}
             </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg">
+              <RefreshCw size={18} />
+            </div>
+            <div>
+              <h3 className="font-serif italic text-lg text-zinc-900">Database Retention & Storage Policy</h3>
+              <p className="text-xs text-zinc-500">Automatic daily maintenance keeps your database lightweight & fast</p>
+            </div>
+          </div>
+          <button
+            onClick={async () => {
+              try {
+                const res = await fetch('/api/admin/cleanup', { method: 'POST' });
+                if (res.ok) {
+                  alert('Database cleanup completed! Old records summarized and database disk space reclaimed.');
+                  fetchData();
+                } else {
+                  alert('Cleanup failed.');
+                }
+              } catch (e) {
+                alert('Network error during cleanup.');
+              }
+            }}
+            className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl transition-all shadow-sm flex items-center gap-1.5"
+          >
+            <RefreshCw size={14} />
+            Run Cleanup Now
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+          <div className="bg-emerald-50/50 p-4 rounded-xl border border-emerald-100">
+            <div className="font-bold text-emerald-900 mb-1">Inventory (Products)</div>
+            <div className="text-emerald-700">Kept <span className="font-bold">Forever</span>. Product catalog and stock levels are never automatically deleted.</div>
+          </div>
+          <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100">
+            <div className="font-bold text-blue-900 mb-1">Summary Data</div>
+            <div className="text-blue-700">Kept for <span className="font-bold">12 Months</span>. Aggregated daily totals of sales, profits, and withdrawals for long-term reporting.</div>
+          </div>
+          <div className="bg-amber-50/50 p-4 rounded-xl border border-amber-100">
+            <div className="font-bold text-amber-900 mb-1">Detailed Transactions</div>
+            <div className="text-amber-700">Kept for <span className="font-bold">7 Days</span>. Granular sales bills, items, and withdrawal details are purged after 7 days.</div>
           </div>
         </div>
       </div>
