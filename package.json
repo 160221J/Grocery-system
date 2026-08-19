@@ -3,14 +3,17 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "scripts": {
-  "dev": "tsx server.ts",
-  "build": "vite build",
-  "start": "tsx server.ts",
-  "preview": "vite preview",
-  "clean": "rm -rf dist",
-  "lint": "tsc --noEmit"
-},
+    "dev": "tsx server.ts",
+    "build": "vite build",
+    "start": "tsx server.ts",
+    "preview": "vite preview",
+    "clean": "rm -rf dist",
+    "lint": "tsc --noEmit"
+  },
   "dependencies": {
     "@google/genai": "^1.29.0",
     "@tailwindcss/vite": "^4.1.14",
@@ -21,7 +24,6 @@
     "vite": "^6.2.0",
     "express": "^4.21.2",
     "dotenv": "^17.2.3",
-    "better-sqlite3": "^12.4.1",
     "motion": "^12.23.24"
   },
   "devDependencies": {

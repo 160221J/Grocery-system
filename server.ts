@@ -1,6 +1,6 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
@@ -8,8 +8,24 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const db = new Database("grocery.db");
+const db = new DatabaseSync("grocery.db");
 db.exec("PRAGMA foreign_keys = ON;");
+
+function runInTransaction<T>(fn: () => T): T {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = fn();
+    db.exec("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // Ignore rollback errors if the transaction was already closed.
+    }
+    throw error;
+  }
+}
 
 // Initialize Database Schema
 db.exec(`
@@ -124,7 +140,7 @@ function runDatabaseCleanup() {
   try {
     console.log("[Cleanup] Starting daily database retention cleanup...");
 
-    const cleanupTransaction = db.transaction(() => {
+    runInTransaction(() => {
       // 1. Identify dates older than 7 days with sales or withdrawals
       const oldSaleDates = db.prepare(`
         SELECT DISTINCT date(created_at) as date 
@@ -202,8 +218,6 @@ function runDatabaseCleanup() {
       console.log(`[Cleanup] Daily summaries saved for ${allOldDates.length} days. Deleted ${deletedSales.changes} old sales, ${deletedWithdrawals.changes} old withdrawals, ${deletedArrivals.changes} old stock arrivals, ${deletedSummaries.changes} summaries > 12 months.`);
     });
 
-    cleanupTransaction();
-
     // 5. Reclaim SQLite disk space
     db.exec("VACUUM;");
     console.log("[Cleanup] Database VACUUM completed successfully.");
@@ -259,7 +273,7 @@ async function startServer() {
       }
       const trimmed = name.trim();
       const info = db.prepare("INSERT INTO users (name) VALUES (?)").run(trimmed);
-      res.json({ id: info.lastInsertRowid, name: trimmed });
+      res.json({ id: Number(info.lastInsertRowid), name: trimmed });
     } catch (error) {
       if (error.message && error.message.includes("UNIQUE")) {
         return res.status(400).json({ error: "A user with this name already exists" });
@@ -274,7 +288,7 @@ async function startServer() {
       if (!Array.isArray(names) || names.length === 0) {
         return res.status(400).json({ error: "Names array is required" });
       }
-      const syncTransaction = db.transaction(() => {
+      runInTransaction(() => {
         const placeholders = names.map(() => '?').join(',');
         db.prepare(`DELETE FROM users WHERE name NOT IN (${placeholders})`).run(...names);
         
@@ -285,7 +299,6 @@ async function startServer() {
           }
         }
       });
-      syncTransaction();
       const updatedUsers = db.prepare("SELECT * FROM users ORDER BY id ASC").all();
       res.json(updatedUsers);
     } catch (error) {
@@ -325,7 +338,7 @@ async function startServer() {
       const { name, unit_type, cost_price, selling_price, quantity, min_stock } = req.body;
       const info = db.prepare("INSERT INTO products (name, unit_type, cost_price, selling_price, quantity, min_stock) VALUES (?, ?, ?, ?, ?, ?)")
         .run(name, unit_type, cost_price, selling_price, quantity, min_stock);
-      res.json({ id: info.lastInsertRowid });
+      res.json({ id: Number(info.lastInsertRowid) });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -348,10 +361,10 @@ async function startServer() {
       let totalAmount = 0;
       let totalProfit = 0;
 
-      const transaction = db.transaction(() => {
+      const saleId = runInTransaction(() => {
         const saleInfo = db.prepare("INSERT INTO sales (total_amount, total_profit, user_name) VALUES (0, 0, ?)")
           .run(user_name || 'System');
-        const saleId = saleInfo.lastInsertRowid;
+        const saleId = Number(saleInfo.lastInsertRowid);
 
         for (const item of items) {
           const product = db.prepare("SELECT * FROM products WHERE id = ?").get(item.product_id) as any;
@@ -385,8 +398,6 @@ async function startServer() {
         db.prepare("UPDATE sales SET total_amount = ?, total_profit = ? WHERE id = ?").run(totalAmount, totalProfit, saleId);
         return saleId;
       });
-
-      const saleId = transaction();
       res.json({ success: true, saleId });
     } catch (error) {
       console.error("Sales error:", error);
@@ -428,7 +439,7 @@ async function startServer() {
       // Convert 0 to null for foreign key compatibility
       const pid = (type === 'item' && product_id !== 0) ? product_id : null;
       
-      const transaction = db.transaction(() => {
+      runInTransaction(() => {
         db.prepare("INSERT INTO withdrawals (type, product_id, amount, description) VALUES (?, ?, ?, ?)")
           .run(type, pid, amount, description);
         
@@ -436,7 +447,6 @@ async function startServer() {
           db.prepare("UPDATE products SET quantity = quantity - 1 WHERE id = ?").run(pid);
         }
       });
-      transaction();
       res.json({ success: true });
     } catch (error) {
       console.error("Withdrawal error:", error);
@@ -456,14 +466,13 @@ async function startServer() {
   app.post("/api/stock-arrivals", (req, res) => {
     try {
       const { product_id, quantity, cost_price } = req.body;
-      const transaction = db.transaction(() => {
+      runInTransaction(() => {
         db.prepare("INSERT INTO stock_arrivals (product_id, quantity, cost_price) VALUES (?, ?, ?)")
           .run(product_id, quantity, cost_price);
         
         db.prepare("UPDATE products SET quantity = quantity + ?, cost_price = ? WHERE id = ?")
           .run(quantity, cost_price, product_id);
       });
-      transaction();
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -488,7 +497,7 @@ async function startServer() {
     try {
       const saleId = req.params.id;
       console.log(`[API] Deleting sale: ${saleId}`);
-      const transaction = db.transaction(() => {
+      runInTransaction(() => {
         const items = db.prepare("SELECT * FROM sale_items WHERE sale_id = ?").all(saleId) as any[];
         for (const item of items) {
           db.prepare("UPDATE products SET quantity = quantity + ? WHERE id = ?").run(item.quantity, item.product_id);
@@ -496,7 +505,6 @@ async function startServer() {
         db.prepare("DELETE FROM sale_items WHERE sale_id = ?").run(saleId);
         db.prepare("DELETE FROM sales WHERE id = ?").run(saleId);
       });
-      transaction();
       res.json({ success: true });
     } catch (error) {
       console.error("Delete sale error:", error);
@@ -508,14 +516,13 @@ async function startServer() {
     try {
       const id = req.params.id;
       console.log(`[API] Deleting withdrawal: ${id}`);
-      const transaction = db.transaction(() => {
+      runInTransaction(() => {
         const withdrawal = db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(id) as any;
         if (withdrawal && withdrawal.type === 'item' && withdrawal.product_id) {
           db.prepare("UPDATE products SET quantity = quantity + 1 WHERE id = ?").run(withdrawal.product_id);
         }
         db.prepare("DELETE FROM withdrawals WHERE id = ?").run(id);
       });
-      transaction();
       res.json({ success: true });
     } catch (error) {
       console.error("Delete withdrawal error:", error);
@@ -527,14 +534,13 @@ async function startServer() {
     try {
       const id = req.params.id;
       console.log(`[API] Deleting stock arrival: ${id}`);
-      const transaction = db.transaction(() => {
+      runInTransaction(() => {
         const arrival = db.prepare("SELECT * FROM stock_arrivals WHERE id = ?").get(id) as any;
         if (arrival) {
           db.prepare("UPDATE products SET quantity = quantity - ? WHERE id = ?").run(arrival.quantity, arrival.product_id);
           db.prepare("DELETE FROM stock_arrivals WHERE id = ?").run(id);
         }
       });
-      transaction();
       res.json({ success: true });
     } catch (error) {
       console.error("Delete stock arrival error:", error);
@@ -647,13 +653,12 @@ async function startServer() {
   app.post("/api/reset/daily", (req, res) => {
     try {
       const today = new Date().toISOString().split('T')[0];
-      const transaction = db.transaction(() => {
+      runInTransaction(() => {
         // We don't revert stock for a bulk reset, just clear history
         db.prepare("DELETE FROM sale_items WHERE sale_id IN (SELECT id FROM sales WHERE date(created_at) = date(?))").run(today);
         db.prepare("DELETE FROM sales WHERE date(created_at) = date(?)").run(today);
         db.prepare("DELETE FROM withdrawals WHERE date(created_at) = date(?)").run(today);
       });
-      transaction();
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -663,12 +668,11 @@ async function startServer() {
   app.post("/api/reset/monthly", (req, res) => {
     try {
       const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
-      const transaction = db.transaction(() => {
+      runInTransaction(() => {
         db.prepare("DELETE FROM sale_items WHERE sale_id IN (SELECT id FROM sales WHERE strftime('%Y-%m', created_at) = ? )").run(currentMonth);
         db.prepare("DELETE FROM sales WHERE strftime('%Y-%m', created_at) = ?").run(currentMonth);
         db.prepare("DELETE FROM withdrawals WHERE strftime('%Y-%m', created_at) = ?").run(currentMonth);
       });
-      transaction();
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -698,7 +702,7 @@ async function startServer() {
   app.delete("/api/products/:id", (req, res) => {
     try {
       const id = req.params.id;
-      const transaction = db.transaction(() => {
+      runInTransaction(() => {
         // Delete related records first to avoid foreign key violations
         db.prepare("DELETE FROM sale_items WHERE product_id = ?").run(id);
         db.prepare("DELETE FROM withdrawals WHERE product_id = ?").run(id);
@@ -708,7 +712,6 @@ async function startServer() {
         // Clean up empty sales (sales with no items left)
         db.prepare("DELETE FROM sales WHERE id NOT IN (SELECT DISTINCT sale_id FROM sale_items)").run();
       });
-      transaction();
       res.json({ success: true });
     } catch (error) {
       console.error("Delete product error:", error);

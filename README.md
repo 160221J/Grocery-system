@@ -11,7 +11,7 @@ View your app in AI Studio: https://ai.studio/apps/d12e9507-86ac-40a0-8f0d-ca2d9
 ## Run Locally
 
 **Prerequisites:**  
-- Node.js
+- Node.js 22.13 or later (uses the built-in `node:sqlite` module; no native SQLite rebuild)
 - npm install
 - npm install -g tsx
 - npm run dev
