@@ -3,19 +3,20 @@ import { DatabaseSync } from "node:sqlite";
 import { getAsset, isSea } from "node:sea";
 import path from "path";
 import fs from "fs";
-import { fileURLToPath } from "url";
 import { exec } from "child_process";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 const packaged = isSea();
 
-function getDataDirectory() {
-  // Keep the shop database next to the .exe (or in the folder you started from)
-  return packaged ? path.dirname(process.execPath) : process.cwd();
+function getAppDirectory() {
+  // Packaged .exe: files live next to the executable.
+  // Portable folder / npm start: use the folder you launched from.
+  if (packaged) {
+    return path.dirname(process.execPath);
+  }
+  return process.cwd();
 }
 
-const sqlite = new DatabaseSync(path.join(getDataDirectory(), "grocery.db"));
+const sqlite = new DatabaseSync(path.join(getAppDirectory(), "grocery.db"));
 sqlite.exec("PRAGMA foreign_keys = ON;");
 
 function runInTransaction<T>(fn: () => T): T {
@@ -796,7 +797,7 @@ async function startServer() {
       }
     });
   } else {
-    const distDir = path.join(__dirname, "dist");
+    const distDir = path.join(getAppDirectory(), "dist");
     const hasBuiltUi = fs.existsSync(path.join(distDir, "index.html"));
 
     if (process.env.NODE_ENV !== "production" && !hasBuiltUi) {
@@ -810,7 +811,7 @@ async function startServer() {
       app.get("*", async (req, res, next) => {
         const url = req.originalUrl;
         try {
-          let template = await fs.promises.readFile(path.resolve(__dirname, "index.html"), "utf-8");
+          let template = await fs.promises.readFile(path.resolve(getAppDirectory(), "index.html"), "utf-8");
           template = await vite.transformIndexHtml(url, template);
           res.status(200).set({ "Content-Type": "text/html" }).end(template);
         } catch (e) {
@@ -831,7 +832,7 @@ async function startServer() {
     const url = `http://localhost:${PORT}`;
     console.log(`ShopFlow is running.`);
     console.log(`Open this address in your browser: ${url}`);
-    console.log(`Data file: ${path.join(getDataDirectory(), "grocery.db")}`);
+    console.log(`Data file: ${path.join(getAppDirectory(), "grocery.db")}`);
     console.log(`Leave this window open while you use the shop.`);
     if (packaged || process.env.SHOPFLOW_OPEN_BROWSER === "1") {
       openBrowser(url);
