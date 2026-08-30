@@ -300,31 +300,49 @@ async function main() {
     writeStarter(target, destDir);
     writeFolderReadme(target, destDir);
 
-    const zipPath = path.join(releaseDir, `${folderName}.zip`);
-    zipFolder(destDir, zipPath);
-
     const seaPath = path.join(destDir, target.seaName);
     const seaOk = tryBuildSea(target, nodeSource, seaPath);
+
+    const zipStageRoot = path.join(releaseDir, "_zips");
+    const zipDir = path.join(zipStageRoot, folderName);
+    ensureDir(zipDir);
     if (seaOk) {
+      fs.copyFileSync(seaPath, path.join(zipDir, target.seaName));
+      fs.chmodSync(path.join(zipDir, target.seaName), 0o755);
       fs.writeFileSync(
-        path.join(destDir, "SINGLE-FILE.txt"),
+        path.join(zipDir, "README.txt"),
         [
-          `You can also copy only ${target.seaName} to another computer and double-click it.`,
-          "The shop data (grocery.db) is created next to that file.",
-          "Windows may show a SmartScreen warning because the file is unsigned. Choose More info → Run anyway.",
+          `Grocery Shop — ${target.label}`,
+          "",
+          `1. Unzip this folder onto the shop computer (Desktop is fine).`,
+          `2. Double-click: ${target.seaName}`,
+          "3. Use the shop in your browser at http://localhost:3000",
+          "4. Leave the black/terminal window open while you work.",
+          "5. Close that window to stop the shop.",
+          "",
+          "The shop computer does not need Node.js or npm.",
+          "Your products and sales are saved in grocery.db next to the app.",
+          "Copy grocery.db if you want to back up or move the shop data.",
+          "",
+          "Windows may show a SmartScreen warning because the file is unsigned.",
+          "Choose More info → Run anyway.",
           "",
         ].join("\n"),
       );
+    } else {
+      fs.cpSync(destDir, zipDir, { recursive: true });
     }
+
+    const zipPath = path.join(releaseDir, `${folderName}.zip`);
+    zipFolder(zipDir, zipPath);
 
     notes.push(`${target.label}:`);
     notes.push(`  Unzip ${folderName}.zip`);
-    notes.push(`  Double-click: ${target.starter}`);
-    if (seaOk) {
-      notes.push(`  Or double-click the single file: ${target.seaName}`);
-    }
+    notes.push(`  Double-click: ${seaOk ? target.seaName : target.starter}`);
     notes.push("");
   }
+
+  fs.rmSync(path.join(releaseDir, "_zips"), { recursive: true, force: true });
 
   notes.push("Open http://localhost:3000 if a browser does not open.");
   notes.push("Leave the app window open while you use the shop.");

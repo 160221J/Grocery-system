@@ -21,9 +21,9 @@ That creates zip files in the `release` folder. Copy the zip for the shop comput
 
 | Computer | Zip file | What to double-click |
 | --- | --- | --- |
-| Windows | `GroceryShop-windows-x64.zip` | `Start Grocery Shop.bat` (or `GroceryShop.exe`) |
-| Linux | `GroceryShop-linux-x64.zip` | `Start-Grocery-Shop.sh` (or `GroceryShop`) |
-| Mac (Apple Silicon) | `GroceryShop-macos-arm64.zip` | `Start Grocery Shop.command` (or `GroceryShop`) |
+| Windows | `GroceryShop-windows-x64.zip` | `GroceryShop.exe` |
+| Linux | `GroceryShop-linux-x64.zip` | `GroceryShop` |
+| Mac (Apple Silicon) | `GroceryShop-macos-arm64.zip` | `GroceryShop` |
 
 Then:
 
