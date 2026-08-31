@@ -1,15 +1,45 @@
 import express from "express";
-import { createServer as createViteServer } from "vite";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
+import { getAsset, isSea } from "node:sea";
 import path from "path";
 import fs from "fs";
-import { fileURLToPath } from "url";
+import { exec } from "child_process";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const packaged = isSea();
 
-const db = new Database("grocery.db");
-db.exec("PRAGMA foreign_keys = ON;");
+function getAppDirectory() {
+  // Packaged .exe: files live next to the executable.
+  // Portable folder / npm start: use the folder you launched from.
+  if (packaged) {
+    return path.dirname(process.execPath);
+  }
+  return process.cwd();
+}
+
+const sqlite = new DatabaseSync(path.join(getAppDirectory(), "grocery.db"));
+sqlite.exec("PRAGMA foreign_keys = ON;");
+
+function runInTransaction<T>(fn: () => T): T {
+  sqlite.exec("BEGIN IMMEDIATE");
+  try {
+    const result = fn();
+    sqlite.exec("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      sqlite.exec("ROLLBACK");
+    } catch {
+      // Ignore rollback errors if the transaction was already closed.
+    }
+    throw error;
+  }
+}
+
+const db = Object.assign(sqlite, {
+  transaction<T>(fn: () => T) {
+    return () => runInTransaction(fn);
+  },
+});
 
 // Initialize Database Schema
 db.exec(`
@@ -212,6 +242,33 @@ function runDatabaseCleanup() {
   }
 }
 
+async function attachViteDevServer(app: express.Express) {
+  const { createServer: createViteServer } = await import("vite");
+  const vite = await createViteServer({
+    server: { middlewareMode: true },
+    appType: "spa",
+  });
+  app.use(vite.middlewares);
+
+  app.get("*", async (req, res, next) => {
+    if (!isPageRequest(req.path)) return next();
+    const url = req.originalUrl;
+    try {
+      let template = await fs.promises.readFile(path.resolve(getAppDirectory(), "index.html"), "utf-8");
+      template = await vite.transformIndexHtml(url, template);
+      res.status(200).set({ "Content-Type": "text/html" }).end(template);
+    } catch (e) {
+      vite.ssrFixStacktrace(e as Error);
+      next(e);
+    }
+  });
+}
+
+function isPageRequest(reqPath: string) {
+  const ext = path.extname(reqPath.split("?")[0]);
+  return ext === "" || ext === ".html";
+}
+
 async function startServer() {
   const app = express();
   app.use(express.json());
@@ -259,7 +316,7 @@ async function startServer() {
       }
       const trimmed = name.trim();
       const info = db.prepare("INSERT INTO users (name) VALUES (?)").run(trimmed);
-      res.json({ id: info.lastInsertRowid, name: trimmed });
+      res.json({ id: Number(info.lastInsertRowid), name: trimmed });
     } catch (error) {
       if (error.message && error.message.includes("UNIQUE")) {
         return res.status(400).json({ error: "A user with this name already exists" });
@@ -325,7 +382,7 @@ async function startServer() {
       const { name, unit_type, cost_price, selling_price, quantity, min_stock } = req.body;
       const info = db.prepare("INSERT INTO products (name, unit_type, cost_price, selling_price, quantity, min_stock) VALUES (?, ?, ?, ?, ?, ?)")
         .run(name, unit_type, cost_price, selling_price, quantity, min_stock);
-      res.json({ id: info.lastInsertRowid });
+      res.json({ id: Number(info.lastInsertRowid) });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -351,7 +408,7 @@ async function startServer() {
       const transaction = db.transaction(() => {
         const saleInfo = db.prepare("INSERT INTO sales (total_amount, total_profit, user_name) VALUES (0, 0, ?)")
           .run(user_name || 'System');
-        const saleId = saleInfo.lastInsertRowid;
+        const saleId = Number(saleInfo.lastInsertRowid);
 
         for (const item of items) {
           const product = db.prepare("SELECT * FROM products WHERE id = ?").get(item.product_id) as any;
@@ -716,36 +773,90 @@ async function startServer() {
     }
   });
 
-  // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-    
-    // Explicitly handle index.html for dev mode
-    app.get("*", async (req, res, next) => {
-      const url = req.originalUrl;
-      try {
-        let template = await fs.promises.readFile(path.resolve(__dirname, "index.html"), "utf-8");
-        template = await vite.transformIndexHtml(url, template);
-        res.status(200).set({ "Content-Type": "text/html" }).end(template);
-      } catch (e) {
-        vite.ssrFixStacktrace(e as Error);
-        next(e);
-      }
-    });
-  } else {
-    app.use(express.static(path.join(__dirname, "dist")));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(__dirname, "dist", "index.html"));
+  function contentTypeFor(filePath: string) {
+    const ext = path.extname(filePath).toLowerCase();
+    const types: Record<string, string> = {
+      ".html": "text/html; charset=utf-8",
+      ".js": "application/javascript; charset=utf-8",
+      ".css": "text/css; charset=utf-8",
+      ".json": "application/json; charset=utf-8",
+      ".svg": "image/svg+xml",
+      ".png": "image/png",
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".gif": "image/gif",
+      ".webp": "image/webp",
+      ".ico": "image/x-icon",
+      ".woff": "font/woff",
+      ".woff2": "font/woff2",
+      ".map": "application/json",
+    };
+    return types[ext] || "application/octet-stream";
+  }
+
+  function openBrowser(url: string) {
+    const command =
+      process.platform === "win32"
+        ? `cmd /c start "" "${url}"`
+        : process.platform === "darwin"
+          ? `open "${url}"`
+          : `xdg-open "${url}"`;
+    exec(command, () => {
+      // Ignore missing desktop/browser on servers
     });
   }
 
-  const PORT = 3000;
+  if (packaged) {
+    app.use((req, res, next) => {
+      if (req.method !== "GET" && req.method !== "HEAD") return next();
+      if (req.path.startsWith("/api")) return next();
+      const key = req.path === "/" ? "index.html" : decodeURIComponent(req.path.replace(/^\//, ""));
+      try {
+        const asset = getAsset(key);
+        res.status(200).set("Content-Type", contentTypeFor(key)).end(Buffer.from(asset));
+      } catch {
+        if (!isPageRequest(req.path)) {
+          res.status(404).end();
+          return;
+        }
+        try {
+          const html = getAsset("index.html");
+          res.status(200).set("Content-Type", "text/html; charset=utf-8").end(Buffer.from(html));
+        } catch (error) {
+          next(error);
+        }
+      }
+    });
+  } else {
+    const distDir = path.join(getAppDirectory(), "dist");
+    const hasBuiltUi = fs.existsSync(path.join(distDir, "index.html"));
+    const useVite = process.env.NODE_ENV !== "production";
+
+    if (useVite) {
+      await attachViteDevServer(app);
+    } else if (hasBuiltUi) {
+      app.use(express.static(distDir));
+      app.get("*", (req, res, next) => {
+        if (!isPageRequest(req.path)) return next();
+        res.sendFile(path.join(distDir, "index.html"));
+      });
+    } else {
+      console.error("No built UI found. Run npm run build, or use npm run dev.");
+      process.exit(1);
+    }
+  }
+
+  const PORT = Number(process.env.PORT) || 3000;
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`ShopFlow Server running on http://localhost:${PORT}`);
+    const url = `http://localhost:${PORT}`;
+    console.log(`ShopFlow is running.`);
+    console.log(`Mode: ${packaged ? "executable" : process.env.NODE_ENV === "production" ? "production" : "development"}`);
+    console.log(`Open this address in your browser: ${url}`);
+    console.log(`Data file: ${path.join(getAppDirectory(), "grocery.db")}`);
+    console.log(`Leave this window open while you use the shop.`);
+    if (packaged || process.env.SHOPFLOW_OPEN_BROWSER === "1") {
+      openBrowser(url);
+    }
   });
 }
 
