@@ -779,6 +779,11 @@ async function startServer() {
     });
   }
 
+  function isPageRequest(reqPath: string) {
+    const ext = path.extname(reqPath.split("?")[0]);
+    return ext === "" || ext === ".html";
+  }
+
   if (packaged) {
     app.use((req, res, next) => {
       if (req.method !== "GET" && req.method !== "HEAD") return next();
@@ -788,6 +793,10 @@ async function startServer() {
         const asset = getAsset(key);
         res.status(200).set("Content-Type", contentTypeFor(key)).end(Buffer.from(asset));
       } catch {
+        if (!isPageRequest(req.path)) {
+          res.status(404).end();
+          return;
+        }
         try {
           const html = getAsset("index.html");
           res.status(200).set("Content-Type", "text/html; charset=utf-8").end(Buffer.from(html));
@@ -799,8 +808,10 @@ async function startServer() {
   } else {
     const distDir = path.join(getAppDirectory(), "dist");
     const hasBuiltUi = fs.existsSync(path.join(distDir, "index.html"));
+    // npm run dev always uses Vite. A leftover dist/ folder must not hide the live UI.
+    const useVite = process.env.NODE_ENV !== "production";
 
-    if (process.env.NODE_ENV !== "production" && !hasBuiltUi) {
+    if (useVite) {
       const { createServer: createViteServer } = await import("vite");
       const vite = await createViteServer({
         server: { middlewareMode: true },
@@ -809,6 +820,7 @@ async function startServer() {
       app.use(vite.middlewares);
 
       app.get("*", async (req, res, next) => {
+        if (!isPageRequest(req.path)) return next();
         const url = req.originalUrl;
         try {
           let template = await fs.promises.readFile(path.resolve(getAppDirectory(), "index.html"), "utf-8");
@@ -819,11 +831,15 @@ async function startServer() {
           next(e);
         }
       });
-    } else {
+    } else if (hasBuiltUi) {
       app.use(express.static(distDir));
-      app.get("*", (req, res) => {
+      app.get("*", (req, res, next) => {
+        if (!isPageRequest(req.path)) return next();
         res.sendFile(path.join(distDir, "index.html"));
       });
+    } else {
+      console.error("No built UI found. Run npm run build, or use npm run dev.");
+      process.exit(1);
     }
   }
 
@@ -831,6 +847,7 @@ async function startServer() {
   app.listen(PORT, "0.0.0.0", () => {
     const url = `http://localhost:${PORT}`;
     console.log(`ShopFlow is running.`);
+    console.log(`Mode: ${packaged ? "executable" : process.env.NODE_ENV === "production" ? "production" : "development"}`);
     console.log(`Open this address in your browser: ${url}`);
     console.log(`Data file: ${path.join(getAppDirectory(), "grocery.db")}`);
     console.log(`Leave this window open while you use the shop.`);
