@@ -265,6 +265,19 @@ async function main() {
     format: "cjs",
     outfile: path.join(buildDir, "server.cjs"),
     define: { "process.env.NODE_ENV": JSON.stringify("production") },
+    // The shop executable only serves the built UI. Vite and its native
+    // addons (lightningcss, esbuild) are for npm run dev, not the zip.
+    external: [
+      "vite",
+      "lightningcss",
+      "esbuild",
+      "tsx",
+      "fsevents",
+      "@vitejs/plugin-react",
+      "@tailwindcss/vite",
+      "@tailwindcss/node",
+      "@tailwindcss/oxide",
+    ],
     legalComments: "none",
     logLevel: "info",
   });

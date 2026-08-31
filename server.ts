@@ -242,6 +242,33 @@ function runDatabaseCleanup() {
   }
 }
 
+async function attachViteDevServer(app: express.Express) {
+  const { createServer: createViteServer } = await import("vite");
+  const vite = await createViteServer({
+    server: { middlewareMode: true },
+    appType: "spa",
+  });
+  app.use(vite.middlewares);
+
+  app.get("*", async (req, res, next) => {
+    if (!isPageRequest(req.path)) return next();
+    const url = req.originalUrl;
+    try {
+      let template = await fs.promises.readFile(path.resolve(getAppDirectory(), "index.html"), "utf-8");
+      template = await vite.transformIndexHtml(url, template);
+      res.status(200).set({ "Content-Type": "text/html" }).end(template);
+    } catch (e) {
+      vite.ssrFixStacktrace(e as Error);
+      next(e);
+    }
+  });
+}
+
+function isPageRequest(reqPath: string) {
+  const ext = path.extname(reqPath.split("?")[0]);
+  return ext === "" || ext === ".html";
+}
+
 async function startServer() {
   const app = express();
   app.use(express.json());
@@ -779,11 +806,6 @@ async function startServer() {
     });
   }
 
-  function isPageRequest(reqPath: string) {
-    const ext = path.extname(reqPath.split("?")[0]);
-    return ext === "" || ext === ".html";
-  }
-
   if (packaged) {
     app.use((req, res, next) => {
       if (req.method !== "GET" && req.method !== "HEAD") return next();
@@ -808,29 +830,10 @@ async function startServer() {
   } else {
     const distDir = path.join(getAppDirectory(), "dist");
     const hasBuiltUi = fs.existsSync(path.join(distDir, "index.html"));
-    // npm run dev always uses Vite. A leftover dist/ folder must not hide the live UI.
     const useVite = process.env.NODE_ENV !== "production";
 
     if (useVite) {
-      const { createServer: createViteServer } = await import("vite");
-      const vite = await createViteServer({
-        server: { middlewareMode: true },
-        appType: "spa",
-      });
-      app.use(vite.middlewares);
-
-      app.get("*", async (req, res, next) => {
-        if (!isPageRequest(req.path)) return next();
-        const url = req.originalUrl;
-        try {
-          let template = await fs.promises.readFile(path.resolve(getAppDirectory(), "index.html"), "utf-8");
-          template = await vite.transformIndexHtml(url, template);
-          res.status(200).set({ "Content-Type": "text/html" }).end(template);
-        } catch (e) {
-          vite.ssrFixStacktrace(e as Error);
-          next(e);
-        }
-      });
+      await attachViteDevServer(app);
     } else if (hasBuiltUi) {
       app.use(express.static(distDir));
       app.get("*", (req, res, next) => {
